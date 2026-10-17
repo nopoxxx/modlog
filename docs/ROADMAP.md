@@ -24,8 +24,8 @@ take the same items (exact match: item + data components) back from whoever got 
 
 **Parts:**
 
-1. Log item pickups and drops by players: new action types, `a:+item` / `a:-item` (like CoreProtect). Useful on its own
-   (who picked up the loot at the crater).
+1. ~~Log item pickups and drops by players~~ — done in 0.7.0 (`a:pickup` / `a:drop`; pickups roll back by taking the
+   items from the player).
 2. Reclaim on rollback of: container `removed`, block breaks of blocks whose drops keep data (machines, shulkers) or whose
    contents spilled (chests), item pickups.
 3. Report what couldn't be reclaimed as a separate line, e.g.
@@ -38,8 +38,9 @@ matching stack is taken.
 
 ## Backlog
 
-- Wireless terminals (AE2/RS) and backpacks: not logged, no block position. Log at the player's position or the access point.
-- `/ml purge t:30d`: delete old rows; the database only grows.
+- Create contraptions: drills/saws on a moving contraption break blocks through a different path (movement
+  behaviours) and aren't logged yet; only stationary drills/saws are.
+- Items absorbed from the ground by blocks (Create basin, hoppers): only the player's drop is logged.
 - MySQL/MariaDB backend for large or multi-server setups.
 - More events: mob kills, item frames / armor stands, buckets (fluids), chat and commands.
 - Slow JVM exit after `stop` on the Arclight test server (not caused by ModLog; investigate with a thread dump).
