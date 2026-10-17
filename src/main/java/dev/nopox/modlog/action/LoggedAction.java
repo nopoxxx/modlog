@@ -13,6 +13,8 @@ import org.jetbrains.annotations.Nullable;
  * @param nbt      compressed NBT: block entity data for blocks, the stack (count 1) for items
  * @param contents for broken containers: human-readable summary of what was inside, e.g. {@code 64 stone, 3 ae2:fluix_crystal}
  * @param contentsCount total number of items inside, 0 if none
+ * @param drops    for broken blocks: compressed {@link dev.nopox.modlog.util.Drops} of what fell out, so rollback can take
+ *                 it back
  */
 public record LoggedAction(
         long time,
@@ -25,6 +27,11 @@ public record LoggedAction(
         int amount,
         byte @Nullable [] nbt,
         @Nullable String contents,
-        int contentsCount
+        int contentsCount,
+        byte @Nullable [] drops
 ) {
+    public LoggedAction(long time, Actor actor, String world, int x, int y, int z, ActionType type, String material,
+                        @Nullable String data, int amount, byte @Nullable [] nbt, @Nullable String contents, int contentsCount) {
+        this(time, actor, world, x, y, z, type, material, data, amount, nbt, contents, contentsCount, null);
+    }
 }

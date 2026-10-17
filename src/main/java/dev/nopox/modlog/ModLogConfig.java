@@ -11,6 +11,7 @@ public final class ModLogConfig {
 
     public static final ModConfigSpec.IntValue ROLLBACK_PER_TICK;
     public static final ModConfigSpec.IntValue ROLLBACK_MAX_ACTIONS;
+    public static final ModConfigSpec.BooleanValue ROLLBACK_RECLAIM;
 
     public static final ModConfigSpec.BooleanValue LOG_BLOCK_BREAK;
     public static final ModConfigSpec.BooleanValue LOG_BLOCK_PLACE;
@@ -39,6 +40,10 @@ public final class ModLogConfig {
                 .defineInRange("actionsPerTick", 500, 1, 100_000);
         ROLLBACK_MAX_ACTIONS = b.comment("A rollback/restore matching more actions than this is refused; narrow it with u:, t:, r:")
                 .defineInRange("maxActions", 200_000, 1, 10_000_000);
+        ROLLBACK_RECLAIM = b.comment("Take back what rolled-back actions gave players (items taken from containers, drops of",
+                        "broken blocks), from the ground, their inventory or wherever the rollback already moved them, so",
+                        "rollbacks don't duplicate items; anything not found is reported")
+                .define("reclaimItems", true);
         b.pop();
 
         b.push("logging");

@@ -3,6 +3,7 @@ package dev.nopox.modlog;
 import com.mojang.logging.LogUtils;
 import dev.nopox.modlog.action.LoggedAction;
 import dev.nopox.modlog.command.ModLogCommand;
+import dev.nopox.modlog.compat.BlockInventories;
 import dev.nopox.modlog.compat.ItemStorages;
 import dev.nopox.modlog.compat.NetworkStorages;
 import dev.nopox.modlog.container.ContainerTracker;
@@ -46,6 +47,7 @@ public final class ModLog {
         RollbackManager.register(NeoForge.EVENT_BUS);
         NetworkStorages.init();
         ItemStorages.init();
+        BlockInventories.init();
         Inspector.register(NeoForge.EVENT_BUS);
     }
 

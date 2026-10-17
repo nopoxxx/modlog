@@ -44,3 +44,15 @@ matching stack is taken.
 - MySQL/MariaDB backend for large or multi-server setups.
 - More events: mob kills, item frames / armor stands, buckets (fluids), chat and commands.
 - Slow JVM exit after `stop` on the Arclight test server (not caused by ModLog; investigate with a thread dump).
+
+- **Interactions (like CoreProtect `a:click`)**: log who used buttons, levers, doors, trapdoors, fence gates,
+  pressure plates, note blocks, repeaters/comparators (setting changes), and modded equivalents.
+  - Hook: `PlayerInteractEvent.RightClickBlock` (LOWEST, not cancelled), confirmed at end of tick like
+    block actions: log only if the block state actually changed (e.g. `powered`, `open`, repeater `delay`),
+    so plain right-clicks on stone aren't logged. That catches modded blocks with a state change too.
+  - New action type `INTERACT` ("clicked" / "toggled"), material = block id, data = state before→after.
+  - Lookup/inspector only by default; rollback could restore the previous state (repeater delay,
+    lever position), but must not fire redstone updates — undecided.
+  - Config `logging.interactions`, filter `a:click`; inspector left/right-click shows them with block actions.
+  - Pressure plates/tripwires are triggered by walking, not clicking: separate optional log (noisy).
+

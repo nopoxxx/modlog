@@ -2,11 +2,13 @@ package dev.nopox.modlog.rollback;
 
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
 import dev.nopox.modlog.ModLog;
+import dev.nopox.modlog.action.ActionType;
 import dev.nopox.modlog.compat.ItemStorages;
 import dev.nopox.modlog.compat.NetworkStorage;
 import dev.nopox.modlog.compat.NetworkStorages;
 import dev.nopox.modlog.container.ContainerContents;
 import dev.nopox.modlog.db.StoredAction;
+import dev.nopox.modlog.util.Drops;
 import dev.nopox.modlog.util.NbtBytes;
 import net.minecraft.commands.arguments.blocks.BlockStateParser;
 import net.minecraft.core.BlockPos;
@@ -47,7 +49,12 @@ final class ActionApplier {
         SKIPPED
     }
 
-    record Result(Outcome outcome, int blocks, int items, @Nullable String skipReason) {
+    /** @param noRoom skipped because the target had no room for the items (it exists, though) */
+    record Result(Outcome outcome, int blocks, int items, @Nullable String skipReason, boolean noRoom) {
+        Result(Outcome outcome, int blocks, int items, @Nullable String skipReason) {
+            this(outcome, blocks, items, skipReason, false);
+        }
+
         static Result skipped(String reason) {
             return new Result(Outcome.SKIPPED, 0, 0, reason);
         }
@@ -56,19 +63,91 @@ final class ActionApplier {
     private ActionApplier() {
     }
 
-    static Result apply(MinecraftServer server, StoredAction a, boolean rollback) {
+    /** @param reclaimer takes back what rolled-back actions gave to players; null to not reclaim */
+    static Result apply(MinecraftServer server, StoredAction a, boolean rollback, @Nullable Reclaimer reclaimer) {
         ServerLevel level = server.getLevel(ResourceKey.create(Registries.DIMENSION, ResourceLocation.parse(a.world())));
         if (level == null) {
             return Result.skipped("world not loaded");
         }
         BlockPos pos = new BlockPos(a.x(), a.y(), a.z());
-        return switch (a.type()) {
+        Result result = switch (a.type()) {
             case BLOCK_BREAK -> rollback ? placeBlock(level, pos, a) : removeBlock(level, pos, a);
             case BLOCK_PLACE -> rollback ? removeBlock(level, pos, a) : placeBlock(level, pos, a);
             case CONTAINER_ADD, ITEM_PICKUP -> rollback ? extractItems(level, pos, a) : insertItems(level, pos, a);
             case ITEM_DROP -> Result.skipped("item drops can't be undone");
             case CONTAINER_REMOVE -> rollback ? insertItems(level, pos, a) : extractItems(level, pos, a);
         };
+        return reclaimer != null && rollback ? reclaim(reclaimer, level, pos, a, result) : result;
+    }
+
+    private static Result reclaim(Reclaimer reclaimer, ServerLevel level, BlockPos pos, StoredAction a, Result result) {
+        if (result.outcome() == Outcome.SKIPPED && !(a.type() == ActionType.CONTAINER_REMOVE && result.noRoom())) {
+            return result;
+        }
+        switch (a.type()) {
+            // Undoing a deposit or pickup removed items from the world: they can stand in for items to take back later
+            case CONTAINER_ADD, ITEM_PICKUP -> reclaimer.credit(itemOf(level, a), result.items());
+            // Items go back into the container: take them all from whoever took them out, even those that no longer
+            // fit (a machine slot automation can't fill); those are settled when the rollback ends
+            case CONTAINER_REMOVE -> {
+                ItemStack template = itemOf(level, a);
+                int inserted = result.outcome() == Outcome.SKIPPED ? 0 : result.items();
+                reclaimer.reclaim(template, a.amount(), a.actorKey(), level, pos, null, Reclaimer.Order.TAKER_FIRST);
+                if (inserted < a.amount()) {
+                    reclaimer.overflow(level, pos, a.data(), template, a.amount() - inserted);
+                    return new Result(Outcome.DONE, 0, a.amount(), null);
+                }
+            }
+            // A player's placed block is gone: the item it was placed from is out of the world again
+            case BLOCK_PLACE -> {
+                if (result.blocks() > 0 && !a.actorKey().startsWith("#")) {
+                    ResourceLocation id = ResourceLocation.tryParse(a.material());
+                    if (id != null) {
+                        reclaimer.creditPlaced(BuiltInRegistries.BLOCK.get(id).asItem());
+                    }
+                }
+            }
+            // The block is back: take what fell out of it when it broke
+            case BLOCK_BREAK -> {
+                if (result.blocks() > 0) {
+                    for (Drops.Drop drop : Drops.decode(a.drops(), level.registryAccess()).drops()) {
+                        reclaimer.reclaim(drop.stack(), drop.stack().getCount(), a.actorKey(), level, pos, drop.entity(),
+                                Reclaimer.Order.GROUND_FIRST);
+                    }
+                }
+            }
+            default -> {
+            }
+        }
+        return result;
+    }
+
+    /**
+     * Puts items into the inventory a container action happened in.
+     *
+     * @return how many went in, or -1 if that inventory doesn't exist (anymore)
+     */
+    static int insertInto(ServerLevel level, BlockPos pos, @Nullable String data, ItemStack template, int count) {
+        if (NetworkStorages.DATA_MARKER.equals(data)) {
+            NetworkStorage network = NetworkStorages.find(level, pos);
+            return network == null ? -1 : (int) network.insert(template, count);
+        }
+        IItemHandler handler = ItemStorages.isMarker(data)
+                ? ItemStorages.find(level.getServer(), data)
+                : ContainerContents.itemHandler(level, pos);
+        if (handler == null) {
+            return -1;
+        }
+        int remaining = count;
+        while (remaining > 0) {
+            int chunk = Math.min(remaining, template.getMaxStackSize());
+            ItemStack left = ItemHandlerHelper.insertItemStacked(handler, template.copyWithCount(chunk), false);
+            remaining -= chunk - left.getCount();
+            if (!left.isEmpty()) {
+                break;
+            }
+        }
+        return count - remaining;
     }
 
     private static Result placeBlock(ServerLevel level, BlockPos pos, StoredAction a) {
@@ -144,7 +223,7 @@ final class ActionApplier {
                 break;
             }
         }
-        return itemResult(a.amount(), a.amount() - remaining, "inventory full");
+        return insertResult(a.amount(), a.amount() - remaining, "inventory full");
     }
 
     private static Result extractItems(ServerLevel level, BlockPos pos, StoredAction a) {
@@ -191,7 +270,12 @@ final class ActionApplier {
             return Result.skipped("unknown item " + a.material());
         }
         long moved = insert ? network.insert(template, a.amount()) : network.extract(template, a.amount());
-        return itemResult(a.amount(), (int) moved, insert ? "network full or offline" : "items gone from network");
+        return insert ? insertResult(a.amount(), (int) moved, "network full or offline")
+                : itemResult(a.amount(), (int) moved, "items gone from network");
+    }
+
+    private static Result insertResult(int wanted, int moved, String reason) {
+        return moved == 0 ? new Result(Outcome.SKIPPED, 0, 0, reason, true) : itemResult(wanted, moved, reason);
     }
 
     private static Result itemResult(int wanted, int moved, String reason) {

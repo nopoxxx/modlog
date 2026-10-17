@@ -51,6 +51,8 @@ public final class Database implements AutoCloseable {
             // Added in 0.2.0
             "ALTER TABLE actions ADD COLUMN contents TEXT",
             "ALTER TABLE actions ADD COLUMN contents_count INTEGER NOT NULL DEFAULT 0",
+            // Added in 0.8.0
+            "ALTER TABLE actions ADD COLUMN drops BLOB",
             "CREATE INDEX IF NOT EXISTS actions_pos ON actions (world, x, z, y)",
             "CREATE INDEX IF NOT EXISTS actions_actor ON actions (actor, time)",
             "CREATE INDEX IF NOT EXISTS actions_time ON actions (time)",
@@ -114,8 +116,8 @@ public final class Database implements AutoCloseable {
     synchronized void insert(List<LoggedAction> actions) throws SQLException {
         writeConnection.setAutoCommit(false);
         try (PreparedStatement ps = writeConnection.prepareStatement("""
-                INSERT INTO actions (time, actor, world, x, y, z, action, material, data, amount, nbt, contents, contents_count)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""")) {
+                INSERT INTO actions (time, actor, world, x, y, z, action, material, data, amount, nbt, contents, contents_count, drops)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""")) {
             for (LoggedAction a : actions) {
                 ps.setLong(1, a.time());
                 ps.setInt(2, actorId(a.actor()));
@@ -130,6 +132,7 @@ public final class Database implements AutoCloseable {
                 ps.setBytes(11, a.nbt());
                 ps.setString(12, a.contents());
                 ps.setInt(13, a.contentsCount());
+                ps.setBytes(14, a.drops());
                 ps.addBatch();
             }
             ps.executeBatch();
@@ -250,7 +253,7 @@ public final class Database implements AutoCloseable {
         params.add(rolledBack ? 1 : 0);
         List<StoredAction> rows = new ArrayList<>();
         try (PreparedStatement ps = readConnection.prepareStatement("""
-                SELECT a.id, w.name, a.x, a.y, a.z, a.action, m.name, a.data, a.amount, a.nbt
+                SELECT a.id, ac.key, w.name, a.x, a.y, a.z, a.action, m.name, a.data, a.amount, a.nbt, a.drops
                 FROM actions a
                 JOIN actors ac ON ac.id = a.actor
                 JOIN worlds w ON w.id = a.world
@@ -260,9 +263,9 @@ public final class Database implements AutoCloseable {
             ps.setInt(params.size() + 1, limit);
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
-                    rows.add(new StoredAction(rs.getLong(1), rs.getString(2), rs.getInt(3), rs.getInt(4), rs.getInt(5),
-                            ActionType.byId(rs.getInt(6)), rs.getString(7), rs.getString(8), rs.getInt(9),
-                            rs.getBytes(10)));
+                    rows.add(new StoredAction(rs.getLong(1), rs.getString(2), rs.getString(3),
+                            rs.getInt(4), rs.getInt(5), rs.getInt(6), ActionType.byId(rs.getInt(7)), rs.getString(8),
+                            rs.getString(9), rs.getInt(10), rs.getBytes(11), rs.getBytes(12)));
                 }
             }
         }

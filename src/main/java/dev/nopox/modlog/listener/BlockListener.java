@@ -6,24 +6,29 @@ import dev.nopox.modlog.action.ActionType;
 import dev.nopox.modlog.action.Actor;
 import dev.nopox.modlog.action.LoggedAction;
 import dev.nopox.modlog.container.ContainerContents;
+import dev.nopox.modlog.util.Drops;
 import dev.nopox.modlog.util.NbtBytes;
 import net.minecraft.commands.arguments.blocks.BlockStateParser;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.level.block.TntBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.neoforged.bus.api.EventPriority;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.neoforge.common.util.BlockSnapshot;
+import net.neoforged.neoforge.event.entity.EntityJoinLevelEvent;
 import net.neoforged.neoforge.event.level.BlockEvent;
 import net.neoforged.neoforge.event.level.ExplosionEvent;
 import net.neoforged.neoforge.event.tick.ServerTickEvent;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -34,16 +39,17 @@ import java.util.Set;
  * of the tick if the world actually changed.
  */
 public final class BlockListener {
+    /** @param drops items that fell out of a broken block this tick, filled in as their entities spawn */
     private record Pending(ServerLevel level, BlockPos pos, ActionType type, BlockState state, Actor actor, long time,
-                           byte @Nullable [] nbt, ContainerContents.@Nullable Summary contents) {
+                           byte @Nullable [] nbt, ContainerContents.@Nullable Summary contents, List<Drops.Drop> drops) {
         static Pending breaking(ServerLevel level, BlockPos pos, BlockState state, Actor actor, long time) {
             // Block entity data and contents must be captured now, they're gone after the break
             return new Pending(level, pos, ActionType.BLOCK_BREAK, state, actor, time,
-                    NbtBytes.blockEntity(level, pos), ContainerContents.summarize(level, pos));
+                    NbtBytes.blockEntity(level, pos), ContainerContents.summarize(level, pos), new ArrayList<>());
         }
 
         static Pending placing(ServerLevel level, BlockPos pos, BlockState state, Actor actor, long time) {
-            return new Pending(level, pos, ActionType.BLOCK_PLACE, state, actor, time, null, null);
+            return new Pending(level, pos, ActionType.BLOCK_PLACE, state, actor, time, null, null, List.of());
         }
     }
 
@@ -51,6 +57,8 @@ public final class BlockListener {
     }
 
     private static final List<Pending> PENDING = new ArrayList<>();
+    /** Breaks pending this tick by position, to attach drops to. */
+    private static final Map<Key, Pending> BREAKING = new HashMap<>();
 
     private BlockListener() {
     }
@@ -61,6 +69,7 @@ public final class BlockListener {
         bus.addListener(EventPriority.LOWEST, BlockListener::onPlace);
         bus.addListener(EventPriority.LOWEST, BlockListener::onExplosion);
         bus.addListener(BlockListener::onTickEnd);
+        bus.addListener(BlockListener::onItemSpawn);
     }
 
     /**
@@ -69,7 +78,26 @@ public final class BlockListener {
      */
     public static void breaking(ServerLevel level, BlockPos pos, BlockState state, Actor actor) {
         if (ModLogConfig.LOG_BLOCK_BREAK.get() && !state.isAir()) {
-            PENDING.add(Pending.breaking(level, pos, state, actor, System.currentTimeMillis()));
+            add(Pending.breaking(level, pos, state, actor, System.currentTimeMillis()));
+        }
+    }
+
+    private static void add(Pending pending) {
+        PENDING.add(pending);
+        if (pending.type == ActionType.BLOCK_BREAK) {
+            BREAKING.putIfAbsent(new Key(pending.level, pending.pos, ActionType.BLOCK_BREAK), pending);
+        }
+    }
+
+    /** Items spawning inside a block that is being broken this tick are its drops (loot and spilled contents). */
+    private static void onItemSpawn(EntityJoinLevelEvent event) {
+        if (BREAKING.isEmpty() || event.loadedFromDisk() || !(event.getEntity() instanceof ItemEntity item)
+                || !(event.getLevel() instanceof ServerLevel level)) {
+            return;
+        }
+        Pending pending = BREAKING.get(new Key(level, item.blockPosition(), ActionType.BLOCK_BREAK));
+        if (pending != null) {
+            pending.drops.add(new Drops.Drop(item.getItem().copy(), item.getUUID()));
         }
     }
 
@@ -81,7 +109,7 @@ public final class BlockListener {
         if (state.isAir()) {
             return;
         }
-        PENDING.add(Pending.breaking(level, event.getPos().immutable(), state, Actor.of(event.getPlayer()),
+        add(Pending.breaking(level, event.getPos().immutable(), state, Actor.of(event.getPlayer()),
                 System.currentTimeMillis()));
     }
 
@@ -95,10 +123,10 @@ public final class BlockListener {
             // Beds, doors, ...: one entry per block
             for (BlockSnapshot snapshot : multi.getReplacedBlockSnapshots()) {
                 BlockPos pos = snapshot.getPos().immutable();
-                PENDING.add(Pending.placing(level, pos, level.getBlockState(pos), actor, now));
+                add(Pending.placing(level, pos, level.getBlockState(pos), actor, now));
             }
         } else {
-            PENDING.add(Pending.placing(level, event.getPos().immutable(), event.getPlacedBlock(), actor, now));
+            add(Pending.placing(level, event.getPos().immutable(), event.getPlacedBlock(), actor, now));
         }
     }
 
@@ -111,7 +139,7 @@ public final class BlockListener {
         for (BlockPos pos : event.getAffectedBlocks()) {
             BlockState state = level.getBlockState(pos);
             if (!state.isAir()) {
-                PENDING.add(Pending.breaking(level, pos.immutable(), state, actor, now));
+                add(Pending.breaking(level, pos.immutable(), state, actor, now));
             }
         }
     }
@@ -146,6 +174,7 @@ public final class BlockListener {
             }
         }
         PENDING.clear();
+        BREAKING.clear();
     }
 
     private static LoggedAction toAction(Pending p, BlockState state) {
@@ -155,6 +184,7 @@ public final class BlockListener {
         String data = props < 0 ? null : serialized.substring(props);
         return new LoggedAction(p.time, p.actor, p.level.dimension().location().toString(),
                 p.pos.getX(), p.pos.getY(), p.pos.getZ(), p.type, material, data, 1, p.nbt,
-                p.contents == null ? null : p.contents.text(), p.contents == null ? 0 : p.contents.total());
+                p.contents == null ? null : p.contents.text(), p.contents == null ? 0 : p.contents.total(),
+                Drops.encode(p.drops, p.level.registryAccess()));
     }
 }

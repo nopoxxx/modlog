@@ -1,5 +1,6 @@
 package dev.nopox.modlog.container;
 
+import dev.nopox.modlog.compat.BlockInventories;
 import dev.nopox.modlog.util.Ids;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
@@ -26,9 +27,13 @@ public final class ContainerContents {
     private ContainerContents() {
     }
 
-    /** The block's item handler for the unsided query, else for any side. */
+    /** The block's full inventory where an integration knows it, else its item handler (unsided, then any side). */
     public static @Nullable IItemHandler itemHandler(ServerLevel level, BlockPos pos) {
-        IItemHandler handler = level.getCapability(Capabilities.ItemHandler.BLOCK, pos, null);
+        IItemHandler handler = BlockInventories.of(level.getBlockEntity(pos));
+        if (handler != null) {
+            return handler;
+        }
+        handler = level.getCapability(Capabilities.ItemHandler.BLOCK, pos, null);
         if (handler != null) {
             return handler;
         }

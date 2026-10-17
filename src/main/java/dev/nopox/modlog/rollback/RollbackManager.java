@@ -13,7 +13,13 @@ import net.minecraft.network.chat.ClickEvent;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.HoverEvent;
 import net.minecraft.network.chat.Style;
+import net.minecraft.core.registries.Registries;
+import net.minecraft.resources.ResourceKey;
+import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.MinecraftServer;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.Containers;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.neoforge.event.server.ServerStoppingEvent;
 import net.neoforged.neoforge.event.tick.ServerTickEvent;
@@ -35,9 +41,15 @@ import java.util.concurrent.ConcurrentHashMap;
 public final class RollbackManager {
     private static final long PROGRESS_INTERVAL_MS = 5000;
 
-    /** What a finished job changed, kept so {@code /ml undo} can apply the opposite. */
-    private record Done(List<StoredAction> applied, boolean rollback) {
+    /**
+     * What a finished job changed, kept so {@code /ml undo} can apply the opposite.
+     *
+     * @param taken items a rollback took back from players or the ground, by action id; undo returns them
+     */
+    private record Done(List<StoredAction> applied, boolean rollback, Map<Long, List<Reclaimer.Taken>> taken) {
     }
+
+    private static final int MAX_MISSING_LINES = 8;
 
     private static final class Job {
         final CommandSourceStack source;
@@ -47,6 +59,10 @@ public final class RollbackManager {
         final List<StoredAction> applied = new ArrayList<>();
         final Map<String, Integer> skipReasons = new TreeMap<>();
         final Runnable onFinish;
+        /** Takes back what rolled-back actions gave players; rollbacks only */
+        final @Nullable Reclaimer reclaimer;
+        /** For an undo of a rollback: items to return as their actions are restored */
+        final Map<Long, List<Reclaimer.Taken>> giveBack;
         final long started = System.currentTimeMillis();
         long lastProgress = started;
         int index;
@@ -55,9 +71,12 @@ public final class RollbackManager {
         int partial;
         int skipped;
 
-        Job(CommandSourceStack source, boolean rollback, List<StoredAction> actions, Runnable onFinish) {
+        Job(CommandSourceStack source, boolean rollback, List<StoredAction> actions, Runnable onFinish,
+            Map<Long, List<Reclaimer.Taken>> giveBack) {
             this.source = source;
             this.onFinish = onFinish;
+            this.giveBack = giveBack;
+            this.reclaimer = rollback && ModLogConfig.ROLLBACK_RECLAIM.get() ? new Reclaimer(source.getServer()) : null;
             this.sourceKey = LookupPresenter.sourceKey(source);
             this.rollback = rollback;
             this.actions = actions;
@@ -126,7 +145,7 @@ public final class RollbackManager {
                 source.sendFailure(Component.literal("More than %d actions match; narrow it down with u:, t: or r:"
                         .formatted(max)));
             } else {
-                begin(new Job(source, rollback, actions, onFinish));
+                begin(new Job(source, rollback, actions, onFinish, Map.of()));
                 started = true;
             }
             if (!started) {
@@ -154,7 +173,7 @@ public final class RollbackManager {
         // Apply the opposite operation in reverse order
         List<StoredAction> actions = new ArrayList<>(last.applied);
         java.util.Collections.reverse(actions);
-        begin(new Job(source, !last.rollback, actions, onFinish));
+        begin(new Job(source, !last.rollback, actions, onFinish, last.taken));
     }
 
     private static void begin(Job job) {
@@ -174,7 +193,13 @@ public final class RollbackManager {
             StoredAction action = job.actions.get(job.index);
             ActionApplier.Result result;
             try {
-                result = ActionApplier.apply(server, action, job.rollback);
+                if (job.reclaimer != null) {
+                    job.reclaimer.beginAction(action.id());
+                }
+                result = ActionApplier.apply(server, action, job.rollback, job.reclaimer);
+                if (result.outcome() != ActionApplier.Outcome.SKIPPED) {
+                    giveBack(server, action, job.giveBack.get(action.id()));
+                }
             } catch (RuntimeException e) {
                 ModLog.LOGGER.error("Failed to apply action #{}", action.id(), e);
                 result = ActionApplier.Result.skipped("error, see server log");
@@ -206,9 +231,54 @@ public final class RollbackManager {
         }
     }
 
+    /** Undo of a rollback: return what it took back for this action to the players / the ground it came from. */
+    private static void giveBack(MinecraftServer server, StoredAction action, @Nullable List<Reclaimer.Taken> taken) {
+        if (taken == null) {
+            return;
+        }
+        ServerLevel level = server.getLevel(ResourceKey.create(Registries.DIMENSION, ResourceLocation.parse(action.world())));
+        for (Reclaimer.Taken t : taken) {
+            ServerPlayer player = t.player() == null ? null : server.getPlayerList().getPlayer(t.player());
+            if (player != null) {
+                // Drops what doesn't fit at the player's feet
+                player.getInventory().placeItemBackInInventory(t.stack().copy());
+            } else if (level != null) {
+                Containers.dropItemStack(level, action.x() + 0.5, action.y() + 0.5, action.z() + 0.5, t.stack().copy());
+            }
+        }
+    }
+
+    private static void report(CommandSourceStack source, Reclaimer reclaimer) {
+        if (reclaimer.reclaimed() > 0) {
+            source.sendSystemMessage(Component.literal(("Took back %d items given out by rolled-back actions "
+                    + "(%d from players, %d from the ground, %d moved on and already undone)").formatted(reclaimer.reclaimed(),
+                    reclaimer.fromPlayers, reclaimer.fromGround, reclaimer.fromCredit)).withStyle(ChatFormatting.DARK_AQUA));
+        }
+        if (reclaimer.overflowDropped > 0) {
+            source.sendSystemMessage(Component.literal("%d taken-back items didn't fit into their container and were dropped next to it"
+                    .formatted(reclaimer.overflowDropped)).withStyle(ChatFormatting.GOLD));
+        }
+        if (reclaimer.overflowDiscarded > 0) {
+            source.sendSystemMessage(Component.literal(("%d taken-back items belonged to a container this rollback removed; "
+                    + "the restored original holds them").formatted(reclaimer.overflowDiscarded)).withStyle(ChatFormatting.GRAY));
+        }
+        List<String> missing = reclaimer.missingSummary();
+        if (!missing.isEmpty()) {
+            source.sendSystemMessage(Component.literal("Not taken back, possible duplicates:").withStyle(ChatFormatting.GOLD));
+            for (int i = 0; i < missing.size() && i < MAX_MISSING_LINES; i++) {
+                source.sendSystemMessage(Component.literal("  " + missing.get(i)).withStyle(ChatFormatting.GOLD));
+            }
+            if (missing.size() > MAX_MISSING_LINES) {
+                source.sendSystemMessage(Component.literal("  ... and %d more".formatted(missing.size() - MAX_MISSING_LINES))
+                        .withStyle(ChatFormatting.GOLD));
+            }
+        }
+    }
+
     private static void finish(Job job, boolean interrupted) {
         running = null;
-        LAST.put(job.sourceKey, new Done(job.applied, job.rollback));
+        LAST.put(job.sourceKey, new Done(job.applied, job.rollback,
+                job.reclaimer == null ? Map.of() : job.reclaimer.takenByAction()));
 
         Storage storage = ModLog.storage();
         if (storage != null && !job.applied.isEmpty()) {
@@ -231,6 +301,10 @@ public final class RollbackManager {
             job.skipReasons.forEach((reason, n) -> reasons.append(reasons.isEmpty() ? "" : ", ").append(n).append(' ').append(reason));
             job.source.sendSystemMessage(Component.literal("Skipped %d: %s".formatted(job.skipped, reasons))
                     .withStyle(ChatFormatting.GOLD));
+        }
+        if (job.reclaimer != null) {
+            job.reclaimer.settleOverflow();
+            report(job.source, job.reclaimer);
         }
         if (!interrupted && !job.applied.isEmpty()) {
             job.source.sendSystemMessage(Component.literal("[Undo]").withStyle(Style.EMPTY.withColor(ChatFormatting.DARK_AQUA)
