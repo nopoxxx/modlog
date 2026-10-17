@@ -1,5 +1,6 @@
 package dev.nopox.modlog.container;
 
+import dev.nopox.modlog.util.Ids;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.registries.BuiltInRegistries;
@@ -61,15 +62,11 @@ public final class ContainerContents {
         String text = counts.entrySet().stream()
                 .sorted(Map.Entry.<Item, Integer>comparingByValue().reversed())
                 .limit(MAX_KINDS)
-                .map(e -> e.getValue() + " " + shortId(BuiltInRegistries.ITEM.getKey(e.getKey()).toString()))
+                .map(e -> e.getValue() + " " + Ids.shortId(BuiltInRegistries.ITEM.getKey(e.getKey()).toString()))
                 .collect(Collectors.joining(", "));
         if (counts.size() > MAX_KINDS) {
             text += ", +" + (counts.size() - MAX_KINDS) + " more kinds";
         }
         return new Summary(text, total);
-    }
-
-    private static String shortId(String id) {
-        return id.startsWith("minecraft:") ? id.substring("minecraft:".length()) : id;
     }
 }

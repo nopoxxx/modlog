@@ -14,6 +14,8 @@ import java.util.stream.Collectors;
  * @param world     dimension to search in; required when {@code center} is set
  * @param center    position for {@code radius}; with radius 0 this is an exact-position lookup
  * @param sinceTime only actions at or after this epoch millis
+ * @param ids       only these action ids (e.g. rolling back a single entry)
+ * @param hideRolledBack leave out actions that are currently rolled back
  */
 public record LookupQuery(
         Set<String> actors,
@@ -22,10 +24,16 @@ public record LookupQuery(
         @Nullable String world,
         @Nullable BlockPos center,
         int radius,
-        @Nullable Long sinceTime
+        @Nullable Long sinceTime,
+        Set<Long> ids,
+        boolean hideRolledBack
 ) {
     public static LookupQuery at(String world, BlockPos pos, Set<ActionType> actions) {
-        return new LookupQuery(Set.of(), actions, Set.of(), world, pos, 0, null);
+        return new LookupQuery(Set.of(), actions, Set.of(), world, pos, 0, null, Set.of(), false);
+    }
+
+    public static LookupQuery ofId(long id) {
+        return new LookupQuery(Set.of(), Set.of(), Set.of(), null, null, 0, null, Set.of(id), false);
     }
 
     String toSqlWhere(List<Object> params) {
@@ -50,6 +58,10 @@ public record LookupQuery(
         appendIn(sql, params, "ac.name", actors);
         appendIn(sql, params, "a.action", actions.stream().map(t -> t.id).collect(Collectors.toSet()));
         appendIn(sql, params, "m.name", materials);
+        appendIn(sql, params, "a.id", ids);
+        if (hideRolledBack) {
+            sql.append(" AND a.rolled_back = 0");
+        }
         return sql.toString();
     }
 

@@ -25,6 +25,21 @@ public final class TimeFormat {
         return String.format(Locale.ROOT, "%.1fd ago", seconds / 86400);
     }
 
+    /** Compact duration, e.g. {@code 10m}, {@code 2h30m}, {@code 1d}. */
+    public static String duration(long millis) {
+        long seconds = Math.max(0, millis / 1000);
+        StringBuilder out = new StringBuilder();
+        long[] units = {604_800, 86_400, 3_600, 60, 1};
+        String[] names = {"w", "d", "h", "m", "s"};
+        for (int i = 0; i < units.length; i++) {
+            if (seconds >= units[i]) {
+                out.append(seconds / units[i]).append(names[i]);
+                seconds %= units[i];
+            }
+        }
+        return out.isEmpty() ? "0s" : out.toString();
+    }
+
     /**
      * Parses durations like {@code 30m}, {@code 1h30m}, {@code 1.5d} or {@code 2w}.
      *

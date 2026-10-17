@@ -44,6 +44,7 @@ public final class RollbackManager {
         final List<StoredAction> actions;
         final List<StoredAction> applied = new ArrayList<>();
         final Map<String, Integer> skipReasons = new TreeMap<>();
+        final Runnable onFinish;
         final long started = System.currentTimeMillis();
         long lastProgress = started;
         int index;
@@ -52,8 +53,9 @@ public final class RollbackManager {
         int partial;
         int skipped;
 
-        Job(CommandSourceStack source, boolean rollback, List<StoredAction> actions) {
+        Job(CommandSourceStack source, boolean rollback, List<StoredAction> actions, Runnable onFinish) {
             this.source = source;
+            this.onFinish = onFinish;
             this.sourceKey = LookupPresenter.sourceKey(source);
             this.rollback = rollback;
             this.actions = actions;
@@ -85,6 +87,12 @@ public final class RollbackManager {
 
     /** Fetches matching actions and starts applying them. Main thread. */
     public static void start(CommandSourceStack source, LookupQuery query, boolean rollback) {
+        start(source, query, rollback, () -> {
+        });
+    }
+
+    /** @param onFinish runs on the main thread when the operation ends (not if it was refused right away) */
+    public static void start(CommandSourceStack source, LookupQuery query, boolean rollback, Runnable onFinish) {
         Storage storage = ModLog.storage();
         if (storage == null) {
             source.sendFailure(Component.literal("ModLog database is not available, see server log"));
@@ -99,6 +107,7 @@ public final class RollbackManager {
         MinecraftServer server = source.getServer();
         storage.fetchForRollback(query, !rollback, max + 1).whenComplete((actions, error) -> server.execute(() -> {
             starting = false;
+            boolean started = false;
             if (error != null) {
                 Throwable cause = error instanceof CompletionException && error.getCause() != null ? error.getCause() : error;
                 ModLog.LOGGER.error("Rollback query failed", cause);
@@ -110,13 +119,22 @@ public final class RollbackManager {
                 source.sendFailure(Component.literal("More than %d actions match; narrow it down with u:, t: or r:"
                         .formatted(max)));
             } else {
-                begin(new Job(source, rollback, actions));
+                begin(new Job(source, rollback, actions, onFinish));
+                started = true;
+            }
+            if (!started) {
+                onFinish.run();
             }
         }));
     }
 
     /** Reverts the source's last rollback or restore. Main thread. */
     public static void undo(CommandSourceStack source) {
+        undo(source, () -> {
+        });
+    }
+
+    public static void undo(CommandSourceStack source, Runnable onFinish) {
         if (running != null || starting) {
             source.sendFailure(Component.literal("Another rollback/restore is in progress, try again when it finishes"));
             return;
@@ -129,7 +147,7 @@ public final class RollbackManager {
         // Apply the opposite operation in reverse order
         List<StoredAction> actions = new ArrayList<>(last.applied);
         java.util.Collections.reverse(actions);
-        begin(new Job(source, !last.rollback, actions));
+        begin(new Job(source, !last.rollback, actions, onFinish));
     }
 
     private static void begin(Job job) {
@@ -212,5 +230,6 @@ public final class RollbackManager {
                     .withClickEvent(new ClickEvent(ClickEvent.Action.RUN_COMMAND, "/ml undo"))
                     .withHoverEvent(new HoverEvent(HoverEvent.Action.SHOW_TEXT, Component.literal("/ml undo")))));
         }
+        job.onFinish.run();
     }
 }

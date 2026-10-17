@@ -10,6 +10,7 @@ import com.mojang.brigadier.tree.LiteralCommandNode;
 import dev.nopox.modlog.ModLog;
 import dev.nopox.modlog.db.LookupQuery;
 import dev.nopox.modlog.db.Storage;
+import dev.nopox.modlog.gui.LogBrowser;
 import dev.nopox.modlog.inspect.Inspector;
 import dev.nopox.modlog.lookup.LookupPresenter;
 import dev.nopox.modlog.rollback.RollbackManager;
@@ -42,6 +43,10 @@ public final class ModLogCommand {
                         .executes(ctx -> lookup(ctx, ""))
                         .then(argument("params", StringArgumentType.greedyString())
                                 .executes(ctx -> lookup(ctx, StringArgumentType.getString(ctx, "params")))))
+                .then(literal("gui")
+                        .executes(ctx -> gui(ctx, ""))
+                        .then(argument("params", StringArgumentType.greedyString())
+                                .executes(ctx -> gui(ctx, StringArgumentType.getString(ctx, "params")))))
                 .then(literal("page")
                         .then(argument("page", IntegerArgumentType.integer(1))
                                 .executes(ModLogCommand::page)))
@@ -73,6 +78,7 @@ public final class ModLogCommand {
     private static int help(CommandContext<CommandSourceStack> ctx) {
         CommandSourceStack s = ctx.getSource();
         s.sendSystemMessage(Component.literal("----- ModLog -----").withStyle(ChatFormatting.DARK_AQUA));
+        s.sendSystemMessage(Component.literal("/ml gui [u:<users>] [b:<blocks>] - browse logs in a GUI"));
         s.sendSystemMessage(Component.literal("/ml i - toggle inspector"));
         s.sendSystemMessage(Component.literal("/ml l " + LookupParams.USAGE + " - search"));
         s.sendSystemMessage(Component.literal("/ml page <n> - page of the last search"));
@@ -121,6 +127,20 @@ public final class ModLogCommand {
             return 0;
         }
         RollbackManager.start(ctx.getSource(), query, rollback);
+        return 1;
+    }
+
+    private static int gui(CommandContext<CommandSourceStack> ctx, String params) throws CommandSyntaxException {
+        ServerPlayer player = ctx.getSource().getPlayerOrException();
+        LookupQuery prefill;
+        try {
+            prefill = LookupParams.parse(params, ctx.getSource());
+        } catch (IllegalArgumentException e) {
+            ctx.getSource().sendFailure(Component.literal(e.getMessage()));
+            return 0;
+        }
+        // Time, area and action type are picked with the GUI's own buttons
+        LogBrowser.open(player, prefill.actors(), prefill.materials());
         return 1;
     }
 

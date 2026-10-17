@@ -91,7 +91,7 @@ public final class LookupParams {
                 default -> throw new IllegalArgumentException("Unknown parameter '" + key + ":'. Usage: " + USAGE);
             }
         }
-        return new LookupQuery(actors, actions, materials, world, center, radius, since);
+        return new LookupQuery(actors, actions, materials, world, center, radius, since, Set.of(), false);
     }
 
     private static Set<ActionType> parseAction(String action) {

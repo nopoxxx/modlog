@@ -7,6 +7,7 @@ import dev.nopox.modlog.db.Database;
 import dev.nopox.modlog.db.LookupQuery;
 import dev.nopox.modlog.db.LookupRow;
 import dev.nopox.modlog.db.Storage;
+import dev.nopox.modlog.util.Ids;
 import dev.nopox.modlog.util.TimeFormat;
 import net.minecraft.ChatFormatting;
 import net.minecraft.commands.CommandSourceStack;
@@ -113,7 +114,7 @@ public final class LookupPresenter {
                 .append(Component.literal(row.actor()).withStyle(ChatFormatting.DARK_AQUA))
                 .append(Component.literal(" " + row.type().verb + " ").withStyle(ChatFormatting.WHITE));
 
-        String item = shortId(row.material());
+        String item = Ids.shortId(row.material());
         if (row.amount() != 1) {
             item = row.amount() + " x " + item;
         }
@@ -134,7 +135,7 @@ public final class LookupPresenter {
 
         if (withLocation) {
             String tp = "/execute in %s run tp @s %d %d %d".formatted(row.world(), row.x(), row.y() + 1, row.z());
-            line.append(Component.literal(" (%d %d %d %s)".formatted(row.x(), row.y(), row.z(), shortId(row.world())))
+            line.append(Component.literal(" (%d %d %d %s)".formatted(row.x(), row.y(), row.z(), Ids.shortId(row.world())))
                     .withStyle(Style.EMPTY.withColor(ChatFormatting.GRAY)
                             .withClickEvent(new ClickEvent(ClickEvent.Action.RUN_COMMAND, tp))
                             .withHoverEvent(new HoverEvent(HoverEvent.Action.SHOW_TEXT, Component.literal("Teleport")))));
@@ -158,9 +159,5 @@ public final class LookupPresenter {
         return Component.literal(text).withStyle(Style.EMPTY.withColor(ChatFormatting.DARK_AQUA)
                 .withClickEvent(new ClickEvent(ClickEvent.Action.RUN_COMMAND, "/ml page " + page))
                 .withHoverEvent(new HoverEvent(HoverEvent.Action.SHOW_TEXT, Component.literal("Page " + page))));
-    }
-
-    private static String shortId(String id) {
-        return id.startsWith("minecraft:") ? id.substring("minecraft:".length()) : id;
     }
 }
