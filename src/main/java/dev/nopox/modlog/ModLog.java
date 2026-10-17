@@ -13,6 +13,7 @@ import dev.nopox.modlog.listener.BlockListener;
 import dev.nopox.modlog.listener.ItemListener;
 import dev.nopox.modlog.listener.TntTracker;
 import dev.nopox.modlog.rollback.RollbackManager;
+import dev.nopox.modlog.rollback.RollbackPreview;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.fml.ModContainer;
 import net.neoforged.fml.common.Mod;
@@ -46,6 +47,7 @@ public final class ModLog {
         TntTracker.register(NeoForge.EVENT_BUS);
         ContainerTracker.register(NeoForge.EVENT_BUS);
         RollbackManager.register(NeoForge.EVENT_BUS);
+        RollbackPreview.register(NeoForge.EVENT_BUS);
         NetworkStorages.init();
         ItemStorages.init();
         BlockInventories.init();

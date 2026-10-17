@@ -28,6 +28,8 @@ Actions are confirmed at the end of the tick, so actions cancelled by other mods
 **Rolling back**
 - `/ml rollback` and `/ml restore` for blocks (with their contents), container transactions, AE2/RS network
   transactions, backpacks and pickups; `/ml undo` reverts the last one.
+- `#preview` shows you the result first — block changes on your client only, item changes summarised in chat — with
+  Apply / Cancel buttons.
 - Never overwrites a block it didn't log; works in slices per tick to avoid lag.
 - **Anti-dupe:** a rollback takes back what the rolled-back actions gave out — items taken from containers and drops of
   broken blocks — from the ground or the player's inventory, following items the same rollback already moved. Anything
@@ -65,6 +67,7 @@ Create 6.0.6, Sophisticated Backpacks 3.25.77 / Core 1.4.86.
 | `/ml status` | `modlog.lookup` | Database status |
 | `/ml rollback <params>` (`rb`) | `modlog.rollback` | Undo matching actions; needs `t:` and `u:` or `r:` |
 | `/ml restore <params>` (`rs`) | `modlog.rollback` | Redo rolled-back actions |
+| `/ml rb <params> #preview` | `modlog.rollback` | Show what a rollback/restore would do; `/ml preview confirm` or `cancel` |
 | `/ml undo` | `modlog.rollback` | Revert your last rollback/restore |
 | `/ml purge t:<age> [vacuum] [confirm]` | `modlog.purge` | Delete actions older than `<age>`; without `confirm` it only counts them |
 

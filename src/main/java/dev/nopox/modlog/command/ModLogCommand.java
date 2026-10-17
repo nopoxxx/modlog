@@ -15,6 +15,7 @@ import dev.nopox.modlog.gui.LogBrowser;
 import dev.nopox.modlog.inspect.Inspector;
 import dev.nopox.modlog.lookup.LookupPresenter;
 import dev.nopox.modlog.rollback.RollbackManager;
+import dev.nopox.modlog.rollback.RollbackPreview;
 import dev.nopox.modlog.util.TimeFormat;
 import net.minecraft.ChatFormatting;
 import net.minecraft.commands.CommandSourceStack;
@@ -70,6 +71,16 @@ public final class ModLogCommand {
                         .requires(s -> Permissions.check(s, Permissions.PURGE))
                         .then(argument("params", StringArgumentType.greedyString())
                                 .executes(ctx -> purge(ctx, StringArgumentType.getString(ctx, "params")))))
+                .then(literal("preview")
+                        .requires(s -> Permissions.check(s, Permissions.ROLLBACK))
+                        .then(literal("confirm").executes(ctx -> {
+                            RollbackPreview.confirm(ctx.getSource().getPlayerOrException());
+                            return 1;
+                        }))
+                        .then(literal("cancel").executes(ctx -> {
+                            RollbackPreview.cancel(ctx.getSource().getPlayerOrException(), true);
+                            return 1;
+                        })))
                 .then(literal("undo")
                         .requires(s -> Permissions.check(s, Permissions.ROLLBACK))
                         .executes(ctx -> {
@@ -103,7 +114,7 @@ public final class ModLogCommand {
         s.sendSystemMessage(Component.literal("/ml i - toggle inspector"));
         s.sendSystemMessage(Component.literal("/ml l " + LookupParams.USAGE + " - search"));
         s.sendSystemMessage(Component.literal("/ml page <n> - page of the last search"));
-        s.sendSystemMessage(Component.literal("/ml rollback|restore <params> - undo/redo matching actions (t: required)"));
+        s.sendSystemMessage(Component.literal("/ml rollback|restore <params> [#preview] - undo/redo matching actions (t: required)"));
         s.sendSystemMessage(Component.literal("/ml undo - revert your last rollback/restore"));
         s.sendSystemMessage(Component.literal("/ml purge t:<age> [vacuum] - delete actions older than <age>"));
         s.sendSystemMessage(Component.literal("/ml status - database status"));
@@ -131,6 +142,13 @@ public final class ModLogCommand {
     }
 
     private static int rollback(CommandContext<CommandSourceStack> ctx, String params, boolean rollback) {
+        // #preview: show the result to the player first instead of applying it
+        boolean preview = (" " + params + " ").toLowerCase(java.util.Locale.ROOT).contains(" #preview ");
+        params = params.replaceAll("(?i)(^|\\s)#preview(?=\\s|$)", " ").trim();
+        if (preview && !(ctx.getSource().getEntity() instanceof ServerPlayer)) {
+            ctx.getSource().sendFailure(Component.literal("#preview needs a player to show it to"));
+            return 0;
+        }
         LookupQuery query;
         try {
             query = LookupParams.parse(params, ctx.getSource());
@@ -148,7 +166,11 @@ public final class ModLogCommand {
             ctx.getSource().sendFailure(Component.literal("Specify users (u:) or an area (r:10, r:#world, or r:#global to really mean everywhere)"));
             return 0;
         }
-        RollbackManager.start(ctx.getSource(), query, rollback);
+        if (preview) {
+            RollbackPreview.start((ServerPlayer) ctx.getSource().getEntity(), query, rollback);
+        } else {
+            RollbackManager.start(ctx.getSource(), query, rollback);
+        }
         return 1;
     }
 

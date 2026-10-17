@@ -150,12 +150,36 @@ final class ActionApplier {
         return count - remaining;
     }
 
-    private static Result placeBlock(ServerLevel level, BlockPos pos, StoredAction a) {
-        BlockState state;
+    /** The logged block state of a block action, or null if the block no longer exists. */
+    static @Nullable BlockState stateOf(StoredAction a) {
         try {
-            state = BlockStateParser.parseForBlock(BuiltInRegistries.BLOCK.asLookup(),
+            return BlockStateParser.parseForBlock(BuiltInRegistries.BLOCK.asLookup(),
                     a.material() + (a.data() == null ? "" : a.data()), false).blockState();
         } catch (CommandSyntaxException e) {
+            return null;
+        }
+    }
+
+    /**
+     * What a block action turns {@code current} into when applied, by the same rules as applying it (never replaces a
+     * block it didn't log), or null if it would be skipped. For previews.
+     */
+    static @Nullable BlockState simulate(StoredAction a, boolean rollback, BlockState current) {
+        boolean place = (a.type() == ActionType.BLOCK_BREAK) == rollback;
+        if (a.type() != ActionType.BLOCK_BREAK && a.type() != ActionType.BLOCK_PLACE) {
+            return null;
+        }
+        if (place) {
+            BlockState state = stateOf(a);
+            return state != null && current.canBeReplaced() ? state : null;
+        }
+        return BuiltInRegistries.BLOCK.getKey(current.getBlock()).toString().equals(a.material())
+                ? Blocks.AIR.defaultBlockState() : null;
+    }
+
+    private static Result placeBlock(ServerLevel level, BlockPos pos, StoredAction a) {
+        BlockState state = stateOf(a);
+        if (state == null) {
             return Result.skipped("unknown block " + a.material());
         }
         BlockState current = level.getBlockState(pos);

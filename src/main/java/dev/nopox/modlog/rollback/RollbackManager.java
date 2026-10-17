@@ -123,11 +123,7 @@ public final class RollbackManager {
             source.sendFailure(Component.literal("Another rollback/restore is in progress, try again when it finishes"));
             return;
         }
-        if (query.actions().isEmpty()) {
-            // Drops can't be undone; leave them out unless asked for explicitly
-            query = new LookupQuery(query.actors(), EnumSet.complementOf(EnumSet.of(ActionType.ITEM_DROP)), query.materials(),
-                    query.world(), query.center(), query.radius(), query.sinceTime(), query.ids(), query.hideRolledBack());
-        }
+        query = undoable(query);
         starting = true;
         int max = ModLogConfig.ROLLBACK_MAX_ACTIONS.get();
         MinecraftServer server = source.getServer();
@@ -152,6 +148,15 @@ public final class RollbackManager {
                 onFinish.run();
             }
         }));
+    }
+
+    /** Drops can't be undone: leave them out unless the query asks for them explicitly. */
+    static LookupQuery undoable(LookupQuery query) {
+        if (!query.actions().isEmpty()) {
+            return query;
+        }
+        return new LookupQuery(query.actors(), EnumSet.complementOf(EnumSet.of(ActionType.ITEM_DROP)), query.materials(),
+                query.world(), query.center(), query.radius(), query.sinceTime(), query.ids(), query.hideRolledBack());
     }
 
     /** Reverts the source's last rollback or restore. Main thread. */
