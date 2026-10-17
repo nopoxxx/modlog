@@ -43,10 +43,29 @@ neoForge {
     }
 }
 
+repositories {
+    exclusiveContent {
+        forRepository {
+            maven {
+                name = 'Modrinth'
+                url = 'https://api.modrinth.com/maven'
+            }
+        }
+        filter {
+            includeGroup 'maven.modrinth'
+        }
+    }
+}
+
 dependencies {
     // Bundled into the mod jar via Jar-in-Jar; also needed on the dev run classpath.
     jarJar(implementation("org.xerial:sqlite-jdbc:${sqlite_jdbc_version}"))
     additionalRuntimeClasspath "org.xerial:sqlite-jdbc:${sqlite_jdbc_version}"
+
+    // Optional integrations; only touched when the mod is loaded
+    compileOnly "maven.modrinth:ae2:${ae2_modrinth_version}"
+    compileOnly "maven.modrinth:refined-storage:${refined_storage_modrinth_version}"
+    compileOnly 'org.apiguardian:apiguardian-api:1.1.2' // annotations used by RS's API
 }
 
 var generateModMetadata = tasks.register("generateModMetadata", ProcessResources) {

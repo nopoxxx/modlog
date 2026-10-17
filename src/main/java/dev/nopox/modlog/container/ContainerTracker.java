@@ -5,6 +5,7 @@ import dev.nopox.modlog.ModLogConfig;
 import dev.nopox.modlog.action.ActionType;
 import dev.nopox.modlog.action.Actor;
 import dev.nopox.modlog.action.LoggedAction;
+import dev.nopox.modlog.compat.NetworkStorages;
 import dev.nopox.modlog.util.NbtBytes;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.BuiltInRegistries;
@@ -48,8 +49,12 @@ import java.util.function.Supplier;
  * Main thread only.
  */
 public final class ContainerTracker {
-    /** A GUI the player opened on a block. */
-    private record Session(AbstractContainerMenu menu, ServerLevel level, BlockPos pos) {
+    /**
+     * A GUI the player opened on a block.
+     *
+     * @param network the GUI is a storage network terminal (AE2, RS): items go to the network, not the block
+     */
+    private record Session(AbstractContainerMenu menu, ServerLevel level, BlockPos pos, boolean network) {
     }
 
     /** Snapshot taken before a packet is handled. */
@@ -57,13 +62,15 @@ public final class ContainerTracker {
         final ServerPlayer player;
         final ServerLevel level;
         final BlockPos pos;
+        final boolean network;
         final Map<ItemKey, Integer> before;
         final Map<ItemKey, Integer> tossed = new HashMap<>();
 
-        Capture(ServerPlayer player, ServerLevel level, BlockPos pos) {
+        Capture(ServerPlayer player, ServerLevel level, BlockPos pos, boolean network) {
             this.player = player;
             this.level = level;
             this.pos = pos;
+            this.network = network;
             this.before = playerItems(player);
         }
     }
@@ -98,7 +105,7 @@ public final class ContainerTracker {
             if (session == null) {
                 task.run();
             } else {
-                capture(game.player, session.level, session.pos, () -> {
+                capture(game.player, session.level, session.pos, session.network, () -> {
                     task.run();
                     return null;
                 });
@@ -109,7 +116,7 @@ public final class ContainerTracker {
     public static <T> Supplier<T> wrapPayload(ServerGamePacketListenerImpl game, Supplier<T> task) {
         return () -> {
             Session session = currentSession(game.player);
-            return session == null ? task.get() : capture(game.player, session.level, session.pos, task);
+            return session == null ? task.get() : capture(game.player, session.level, session.pos, session.network, task);
         };
     }
 
@@ -118,6 +125,7 @@ public final class ContainerTracker {
     private static void handleVanilla(ServerPlayer player, Packet<?> packet, Runnable task) {
         ServerLevel level = player.serverLevel();
         @Nullable BlockPos target = null;
+        boolean network = false;
         @Nullable BlockPos usingOn = null;
 
         if (packet instanceof ServerboundContainerClickPacket
@@ -127,6 +135,7 @@ public final class ContainerTracker {
             if (session != null) {
                 level = session.level;
                 target = session.pos;
+                network = session.network;
             }
         } else if (packet instanceof ServerboundUseItemOnPacket use) {
             usingOn = use.getHitResult().getBlockPos();
@@ -149,7 +158,7 @@ public final class ContainerTracker {
             if (target == null) {
                 task.run();
             } else {
-                capture(player, level, target, () -> {
+                capture(player, level, target, network, () -> {
                     task.run();
                     return null;
                 });
@@ -161,11 +170,11 @@ public final class ContainerTracker {
         }
     }
 
-    private static <T> T capture(ServerPlayer player, ServerLevel level, BlockPos pos, Supplier<T> task) {
+    private static <T> T capture(ServerPlayer player, ServerLevel level, BlockPos pos, boolean network, Supplier<T> task) {
         if (active != null || !ModLogConfig.LOG_CONTAINERS.get()) {
             return task.get();
         }
-        Capture capture = new Capture(player, level, pos.immutable());
+        Capture capture = new Capture(player, level, pos.immutable(), network);
         active = capture;
         try {
             return task.get();
@@ -193,7 +202,8 @@ public final class ContainerTracker {
             ItemStack stack = key.stack();
             ModLog.log(new LoggedAction(now, actor, world, c.pos.getX(), c.pos.getY(), c.pos.getZ(),
                     n > 0 ? ActionType.CONTAINER_ADD : ActionType.CONTAINER_REMOVE,
-                    BuiltInRegistries.ITEM.getKey(stack.getItem()).toString(), null, Math.abs(n),
+                    BuiltInRegistries.ITEM.getKey(stack.getItem()).toString(),
+                    c.network ? NetworkStorages.DATA_MARKER : null, Math.abs(n),
                     NbtBytes.compress((CompoundTag) stack.save(c.level.registryAccess())), null, 0));
         });
     }
@@ -240,7 +250,7 @@ public final class ContainerTracker {
             SESSIONS.remove(player.getUUID());
             return;
         }
-        SESSIONS.put(player.getUUID(), new Session(menu, level, pos.immutable()));
+        SESSIONS.put(player.getUUID(), new Session(menu, level, pos.immutable(), NetworkStorages.isTerminal(menu)));
     }
 
     /** Fallback for menus opened without a click: a slot whose container is a block entity (vanilla-style blocks). */

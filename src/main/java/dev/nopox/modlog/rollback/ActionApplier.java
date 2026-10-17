@@ -2,6 +2,8 @@ package dev.nopox.modlog.rollback;
 
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
 import dev.nopox.modlog.ModLog;
+import dev.nopox.modlog.compat.NetworkStorage;
+import dev.nopox.modlog.compat.NetworkStorages;
 import dev.nopox.modlog.container.ContainerContents;
 import dev.nopox.modlog.db.StoredAction;
 import dev.nopox.modlog.util.NbtBytes;
@@ -112,10 +114,15 @@ final class ActionApplier {
     }
 
     private static Result insertItems(ServerLevel level, BlockPos pos, StoredAction a) {
+        if (NetworkStorages.DATA_MARKER.equals(a.data())) {
+            return viaNetwork(level, pos, a, true);
+        }
         IItemHandler handler = ContainerContents.itemHandler(level, pos);
         ItemStack template = itemOf(level, a);
         if (handler == null) {
-            return Result.skipped("no inventory");
+            // Logged by an older version without the network marker, or the block has no inventory of its own
+            return NetworkStorages.find(level, pos) != null ? viaNetwork(level, pos, a, true)
+                    : Result.skipped("no inventory");
         }
         if (template.isEmpty()) {
             return Result.skipped("unknown item " + a.material());
@@ -133,10 +140,15 @@ final class ActionApplier {
     }
 
     private static Result extractItems(ServerLevel level, BlockPos pos, StoredAction a) {
+        if (NetworkStorages.DATA_MARKER.equals(a.data())) {
+            return viaNetwork(level, pos, a, false);
+        }
         IItemHandler handler = ContainerContents.itemHandler(level, pos);
         ItemStack template = itemOf(level, a);
         if (handler == null) {
-            return Result.skipped("no inventory");
+            // Logged by an older version without the network marker, or the block has no inventory of its own
+            return NetworkStorages.find(level, pos) != null ? viaNetwork(level, pos, a, false)
+                    : Result.skipped("no inventory");
         }
         if (template.isEmpty()) {
             return Result.skipped("unknown item " + a.material());
@@ -148,6 +160,20 @@ final class ActionApplier {
             }
         }
         return itemResult(a.amount(), a.amount() - remaining, "items gone");
+    }
+
+    /** For actions done through an AE2/RS terminal: move the items into/out of the network the terminal is on. */
+    private static Result viaNetwork(ServerLevel level, BlockPos pos, StoredAction a, boolean insert) {
+        NetworkStorage network = NetworkStorages.find(level, pos);
+        ItemStack template = itemOf(level, a);
+        if (network == null) {
+            return Result.skipped("no storage network");
+        }
+        if (template.isEmpty()) {
+            return Result.skipped("unknown item " + a.material());
+        }
+        long moved = insert ? network.insert(template, a.amount()) : network.extract(template, a.amount());
+        return itemResult(a.amount(), (int) moved, insert ? "network full or offline" : "items gone from network");
     }
 
     private static Result itemResult(int wanted, int moved, String reason) {

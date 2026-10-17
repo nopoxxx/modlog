@@ -2,6 +2,7 @@ package dev.nopox.modlog.lookup;
 
 import dev.nopox.modlog.ModLog;
 import dev.nopox.modlog.ModLogConfig;
+import dev.nopox.modlog.compat.NetworkStorages;
 import dev.nopox.modlog.db.Database;
 import dev.nopox.modlog.db.LookupQuery;
 import dev.nopox.modlog.db.LookupRow;
@@ -116,7 +117,12 @@ public final class LookupPresenter {
         if (row.amount() != 1) {
             item = row.amount() + " x " + item;
         }
-        String hover = row.material() + (row.data() == null ? "" : row.data());
+        String hover = row.material();
+        if (NetworkStorages.DATA_MARKER.equals(row.data())) {
+            hover += "\nvia storage network terminal";
+        } else if (row.data() != null) {
+            hover += row.data();
+        }
         line.append(Component.literal(item).withStyle(Style.EMPTY.withColor(ChatFormatting.DARK_AQUA)
                 .withHoverEvent(new HoverEvent(HoverEvent.Action.SHOW_TEXT, Component.literal(hover)))));
         if (row.contentsCount() > 0 && row.contents() != null) {
