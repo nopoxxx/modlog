@@ -1,5 +1,6 @@
 package dev.nopox.modlog.compat;
 
+import dev.nopox.modlog.util.Lang;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.player.Inventory;
@@ -68,6 +69,12 @@ final class SophisticatedBackpacksCompat implements ItemStorages.Provider {
      */
     private static IItemHandler inventoryOf(IStorageWrapper wrapper) {
         return new CombinedInvWrapper(wrapper.getUpgradeHandler(), wrapper.getInventoryHandler());
+    }
+
+    @Override
+    public String describe(String language, String marker) {
+        String id = marker.substring(PREFIX.length());
+        return Lang.tr(language, "where.backpack", id.substring(0, Math.min(8, id.length())));
     }
 
     @Override

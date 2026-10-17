@@ -26,7 +26,8 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 public final class Inspector {
     private static final Set<UUID> ENABLED = ConcurrentHashMap.newKeySet();
-    private static final Set<ActionType> BLOCK_ACTIONS = EnumSet.of(ActionType.BLOCK_BREAK, ActionType.BLOCK_PLACE);
+    private static final Set<ActionType> BLOCK_ACTIONS = EnumSet.of(ActionType.BLOCK_BREAK, ActionType.BLOCK_PLACE,
+            ActionType.SIGN_EDIT);
     private static final Set<ActionType> CONTAINER_ACTIONS = EnumSet.of(ActionType.CONTAINER_ADD, ActionType.CONTAINER_REMOVE,
             ActionType.ITEM_PICKUP);
 

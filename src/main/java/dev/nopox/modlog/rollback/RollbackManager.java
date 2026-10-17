@@ -7,6 +7,7 @@ import dev.nopox.modlog.db.LookupQuery;
 import dev.nopox.modlog.db.Storage;
 import dev.nopox.modlog.db.StoredAction;
 import dev.nopox.modlog.lookup.LookupPresenter;
+import dev.nopox.modlog.util.Lang;
 import net.minecraft.ChatFormatting;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.network.chat.ClickEvent;
@@ -20,6 +21,7 @@ import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.Containers;
+import net.minecraft.world.item.ItemStack;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.neoforge.event.server.ServerStoppingEvent;
 import net.neoforged.neoforge.event.tick.ServerTickEvent;
@@ -82,8 +84,9 @@ public final class RollbackManager {
             this.actions = actions;
         }
 
+        /** "Rollback" or "Restore" in the source's language. */
         String verb() {
-            return rollback ? "Rollback" : "Restore";
+            return Lang.tr(source, rollback ? "rollback.name" : "restore.name");
         }
     }
 
@@ -116,11 +119,11 @@ public final class RollbackManager {
     public static void start(CommandSourceStack source, LookupQuery query, boolean rollback, Runnable onFinish) {
         Storage storage = ModLog.storage();
         if (storage == null) {
-            source.sendFailure(Component.literal("ModLog database is not available, see server log"));
+            source.sendFailure(Lang.text(source, "error.database_unavailable"));
             return;
         }
         if (running != null || starting) {
-            source.sendFailure(Component.literal("Another rollback/restore is in progress, try again when it finishes"));
+            source.sendFailure(Lang.text(source, "error.busy"));
             return;
         }
         query = undoable(query);
@@ -133,13 +136,12 @@ public final class RollbackManager {
             if (error != null) {
                 Throwable cause = error instanceof CompletionException && error.getCause() != null ? error.getCause() : error;
                 ModLog.LOGGER.error("Rollback query failed", cause);
-                source.sendFailure(Component.literal("Rollback failed: " + cause.getMessage()));
+                source.sendFailure(Lang.text(source, "error.rollback_failed", cause.getMessage()));
             } else if (actions.isEmpty()) {
-                source.sendSystemMessage(Component.literal("Nothing to " + (rollback ? "roll back" : "restore") + ".")
+                source.sendSystemMessage(Lang.text(source, rollback ? "rollback.nothing" : "restore.nothing")
                         .withStyle(ChatFormatting.GRAY));
             } else if (actions.size() > max) {
-                source.sendFailure(Component.literal("More than %d actions match; narrow it down with u:, t: or r:"
-                        .formatted(max)));
+                source.sendFailure(Lang.text(source, "error.too_many", max));
             } else {
                 begin(new Job(source, rollback, actions, onFinish, Map.of()));
                 started = true;
@@ -150,12 +152,18 @@ public final class RollbackManager {
         }));
     }
 
-    /** Drops can't be undone: leave them out unless the query asks for them explicitly. */
+    /** Drops, chat and commands can't be undone: leave them out unless the query asks for them explicitly. */
     static LookupQuery undoable(LookupQuery query) {
         if (!query.actions().isEmpty()) {
             return query;
         }
-        return new LookupQuery(query.actors(), EnumSet.complementOf(EnumSet.of(ActionType.ITEM_DROP)), query.materials(),
+        EnumSet<ActionType> undoable = EnumSet.noneOf(ActionType.class);
+        for (ActionType type : ActionType.values()) {
+            if (!type.lookupOnly()) {
+                undoable.add(type);
+            }
+        }
+        return new LookupQuery(query.actors(), undoable, query.materials(),
                 query.world(), query.center(), query.radius(), query.sinceTime(), query.ids(), query.hideRolledBack());
     }
 
@@ -167,12 +175,12 @@ public final class RollbackManager {
 
     public static void undo(CommandSourceStack source, Runnable onFinish) {
         if (running != null || starting) {
-            source.sendFailure(Component.literal("Another rollback/restore is in progress, try again when it finishes"));
+            source.sendFailure(Lang.text(source, "error.busy"));
             return;
         }
         Done last = LAST.remove(LookupPresenter.sourceKey(source));
         if (last == null) {
-            source.sendFailure(Component.literal("Nothing to undo."));
+            source.sendFailure(Lang.text(source, "undo.nothing"));
             return;
         }
         // Apply the opposite operation in reverse order
@@ -183,8 +191,8 @@ public final class RollbackManager {
 
     private static void begin(Job job) {
         running = job;
-        job.source.sendSystemMessage(Component.literal("%s of %d actions started..."
-                .formatted(job.verb(), job.actions.size())).withStyle(ChatFormatting.DARK_AQUA));
+        job.source.sendSystemMessage(Lang.text(job.source, "rollback.started", job.verb(), job.actions.size())
+                .withStyle(ChatFormatting.DARK_AQUA));
     }
 
     private static void onTick(ServerTickEvent.Post event) {
@@ -207,7 +215,7 @@ public final class RollbackManager {
                 }
             } catch (RuntimeException e) {
                 ModLog.LOGGER.error("Failed to apply action #{}", action.id(), e);
-                result = ActionApplier.Result.skipped("error, see server log");
+                result = ActionApplier.Result.skipped("skip.error");
             }
             job.blocks += result.blocks();
             job.items += result.items();
@@ -231,7 +239,7 @@ public final class RollbackManager {
         long now = System.currentTimeMillis();
         if (now - job.lastProgress >= PROGRESS_INTERVAL_MS) {
             job.lastProgress = now;
-            job.source.sendSystemMessage(Component.literal("%s: %d%% (%d/%d)".formatted(job.verb(),
+            job.source.sendSystemMessage(Component.literal(String.format(Locale.ROOT, "%s: %d%% (%d/%d)", job.verb(),
                     job.index * 100 / job.actions.size(), job.index, job.actions.size())).withStyle(ChatFormatting.GRAY));
         }
     }
@@ -244,37 +252,44 @@ public final class RollbackManager {
         ServerLevel level = server.getLevel(ResourceKey.create(Registries.DIMENSION, ResourceLocation.parse(action.world())));
         for (Reclaimer.Taken t : taken) {
             ServerPlayer player = t.player() == null ? null : server.getPlayerList().getPlayer(t.player());
+            ItemStack left = t.stack().copy();
             if (player != null) {
                 // Drops what doesn't fit at the player's feet
-                player.getInventory().placeItemBackInInventory(t.stack().copy());
-            } else if (level != null) {
-                Containers.dropItemStack(level, action.x() + 0.5, action.y() + 0.5, action.z() + 0.5, t.stack().copy());
+                player.getInventory().placeItemBackInInventory(left);
+                continue;
+            }
+            if (t.player() != null) {
+                left = OfflineInventories.give(server, t.player(), left);
+            }
+            if (!left.isEmpty() && level != null) {
+                Containers.dropItemStack(level, action.x() + 0.5, action.y() + 0.5, action.z() + 0.5, left);
             }
         }
     }
 
     private static void report(CommandSourceStack source, Reclaimer reclaimer) {
+        String lang = Lang.of(source);
         if (reclaimer.reclaimed() > 0) {
-            source.sendSystemMessage(Component.literal(("Took back %d items given out by rolled-back actions "
-                    + "(%d from players, %d from the ground, %d moved on and already undone)").formatted(reclaimer.reclaimed(),
-                    reclaimer.fromPlayers, reclaimer.fromGround, reclaimer.fromCredit)).withStyle(ChatFormatting.DARK_AQUA));
+            String offline = reclaimer.fromOffline > 0 ? Lang.tr(lang, "reclaim.offline_part", reclaimer.fromOffline) : "";
+            source.sendSystemMessage(Lang.text(lang, "reclaim.summary", reclaimer.reclaimed(), reclaimer.fromPlayers, offline,
+                    reclaimer.fromGround, reclaimer.fromCredit).withStyle(ChatFormatting.DARK_AQUA));
         }
         if (reclaimer.overflowDropped > 0) {
-            source.sendSystemMessage(Component.literal("%d taken-back items didn't fit into their container and were dropped next to it"
-                    .formatted(reclaimer.overflowDropped)).withStyle(ChatFormatting.GOLD));
+            source.sendSystemMessage(Lang.text(lang, "reclaim.overflow_dropped", reclaimer.overflowDropped)
+                    .withStyle(ChatFormatting.GOLD));
         }
         if (reclaimer.overflowDiscarded > 0) {
-            source.sendSystemMessage(Component.literal(("%d taken-back items belonged to a container this rollback removed; "
-                    + "the restored original holds them").formatted(reclaimer.overflowDiscarded)).withStyle(ChatFormatting.GRAY));
+            source.sendSystemMessage(Lang.text(lang, "reclaim.overflow_discarded", reclaimer.overflowDiscarded)
+                    .withStyle(ChatFormatting.GRAY));
         }
-        List<String> missing = reclaimer.missingSummary();
+        List<String> missing = reclaimer.missingSummary(lang);
         if (!missing.isEmpty()) {
-            source.sendSystemMessage(Component.literal("Not taken back, possible duplicates:").withStyle(ChatFormatting.GOLD));
+            source.sendSystemMessage(Lang.text(lang, "reclaim.missing").withStyle(ChatFormatting.GOLD));
             for (int i = 0; i < missing.size() && i < MAX_MISSING_LINES; i++) {
                 source.sendSystemMessage(Component.literal("  " + missing.get(i)).withStyle(ChatFormatting.GOLD));
             }
             if (missing.size() > MAX_MISSING_LINES) {
-                source.sendSystemMessage(Component.literal("  ... and %d more".formatted(missing.size() - MAX_MISSING_LINES))
+                source.sendSystemMessage(Component.literal("  " + Lang.tr(lang, "list.more", missing.size() - MAX_MISSING_LINES))
                         .withStyle(ChatFormatting.GOLD));
             }
         }
@@ -295,24 +310,25 @@ public final class RollbackManager {
         }
 
         double seconds = (System.currentTimeMillis() - job.started) / 1000.0;
-        String summary = String.format(Locale.ROOT, "%s %s in %.1fs: %d blocks, %d items changed",
-                job.verb(), interrupted ? "INTERRUPTED (server stopping)" : "finished", seconds, job.blocks, job.items);
+        String lang = Lang.of(job.source);
+        String summary = Lang.tr(lang, interrupted ? "rollback.interrupted" : "rollback.finished", job.verb(), seconds,
+                job.blocks, job.items);
         if (job.partial > 0) {
-            summary += ", " + job.partial + " partially";
+            summary += Lang.tr(lang, "rollback.partially", job.partial);
         }
         job.source.sendSystemMessage(Component.literal(summary).withStyle(ChatFormatting.DARK_AQUA));
         if (job.skipped > 0) {
             StringBuilder reasons = new StringBuilder();
-            job.skipReasons.forEach((reason, n) -> reasons.append(reasons.isEmpty() ? "" : ", ").append(n).append(' ').append(reason));
-            job.source.sendSystemMessage(Component.literal("Skipped %d: %s".formatted(job.skipped, reasons))
-                    .withStyle(ChatFormatting.GOLD));
+            job.skipReasons.forEach((reason, n) -> reasons.append(reasons.isEmpty() ? "" : ", ").append(n).append(' ')
+                    .append(Lang.tr(lang, reason)));
+            job.source.sendSystemMessage(Lang.text(lang, "rollback.skipped", job.skipped, reasons).withStyle(ChatFormatting.GOLD));
         }
         if (job.reclaimer != null) {
             job.reclaimer.settleOverflow();
             report(job.source, job.reclaimer);
         }
         if (!interrupted && !job.applied.isEmpty()) {
-            job.source.sendSystemMessage(Component.literal("[Undo]").withStyle(Style.EMPTY.withColor(ChatFormatting.DARK_AQUA)
+            job.source.sendSystemMessage(Component.literal("[" + Lang.tr(lang, "button.undo") + "]").withStyle(Style.EMPTY.withColor(ChatFormatting.DARK_AQUA)
                     .withClickEvent(new ClickEvent(ClickEvent.Action.RUN_COMMAND, "/ml undo"))
                     .withHoverEvent(new HoverEvent(HoverEvent.Action.SHOW_TEXT, Component.literal("/ml undo")))));
         }

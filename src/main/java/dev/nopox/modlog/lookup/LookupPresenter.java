@@ -2,6 +2,7 @@ package dev.nopox.modlog.lookup;
 
 import dev.nopox.modlog.ModLog;
 import dev.nopox.modlog.ModLogConfig;
+import dev.nopox.modlog.action.ActionType;
 import dev.nopox.modlog.compat.ItemStorages;
 import dev.nopox.modlog.compat.NetworkStorages;
 import dev.nopox.modlog.db.Database;
@@ -9,6 +10,7 @@ import dev.nopox.modlog.db.LookupQuery;
 import dev.nopox.modlog.db.LookupRow;
 import dev.nopox.modlog.db.Storage;
 import dev.nopox.modlog.util.Ids;
+import dev.nopox.modlog.util.Lang;
 import dev.nopox.modlog.util.TimeFormat;
 import net.minecraft.ChatFormatting;
 import net.minecraft.commands.CommandSourceStack;
@@ -60,7 +62,7 @@ public final class LookupPresenter {
     private static void run(CommandSourceStack source, LookupQuery query, boolean inspector, int page) {
         Storage storage = ModLog.storage();
         if (storage == null) {
-            source.sendFailure(Component.literal("ModLog database is not available, see server log"));
+            source.sendFailure(Lang.text(source, "error.database_unavailable"));
             return;
         }
         int pageSize = ModLogConfig.PAGE_SIZE.get();
@@ -69,7 +71,7 @@ public final class LookupPresenter {
             if (error != null) {
                 Throwable cause = error instanceof CompletionException && error.getCause() != null ? error.getCause() : error;
                 ModLog.LOGGER.error("Lookup failed", cause);
-                source.sendFailure(Component.literal("Lookup failed: " + cause.getMessage()));
+                source.sendFailure(Lang.text(source, "error.lookup_failed", cause.getMessage()));
             } else {
                 print(source, query, inspector, page, pageSize, result);
             }
@@ -78,6 +80,7 @@ public final class LookupPresenter {
 
     private static void print(CommandSourceStack source, LookupQuery query, boolean inspector, int page, int pageSize,
                               Database.Page result) {
+        String lang = Lang.of(source);
         MutableComponent header = Component.literal("----- ").withStyle(ChatFormatting.WHITE)
                 .append(Component.literal("ModLog").withStyle(ChatFormatting.DARK_AQUA))
                 .append(" -----");
@@ -88,49 +91,52 @@ public final class LookupPresenter {
         source.sendSystemMessage(header);
 
         if (result.total() == 0) {
-            source.sendSystemMessage(Component.literal("No data found.").withStyle(ChatFormatting.GRAY));
+            source.sendSystemMessage(Lang.text(lang, "lookup.no_data").withStyle(ChatFormatting.GRAY));
             return;
         }
         int pages = (result.total() + pageSize - 1) / pageSize;
         if (result.rows().isEmpty()) {
-            source.sendSystemMessage(Component.literal("Page %d doesn't exist (%d pages).".formatted(page, pages))
-                    .withStyle(ChatFormatting.GRAY));
+            source.sendSystemMessage(Lang.text(lang, "lookup.no_such_page", page, pages).withStyle(ChatFormatting.GRAY));
             return;
         }
 
         long now = System.currentTimeMillis();
         for (LookupRow row : result.rows()) {
-            source.sendSystemMessage(formatRow(row, now, !inspector));
+            source.sendSystemMessage(formatRow(lang, row, now, !inspector));
         }
         if (pages > 1) {
-            source.sendSystemMessage(pageFooter(page, pages));
+            source.sendSystemMessage(pageFooter(lang, page, pages));
         }
     }
 
-    private static Component formatRow(LookupRow row, long now, boolean withLocation) {
+    private static Component formatRow(String lang, LookupRow row, long now, boolean withLocation) {
         Style rowStyle = row.rolledBack() ? Style.EMPTY.withStrikethrough(true) : Style.EMPTY;
-        MutableComponent line = Component.literal(TimeFormat.ago(now - row.time()))
+        MutableComponent line = Component.literal(TimeFormat.ago(lang, now - row.time()))
                 .withStyle(ChatFormatting.GRAY)
                 .append(Component.literal(" - ").withStyle(ChatFormatting.WHITE))
                 .append(Component.literal(row.actor()).withStyle(ChatFormatting.DARK_AQUA))
-                .append(Component.literal(" " + row.type().verb + " ").withStyle(ChatFormatting.WHITE));
+                .append(Component.literal(" " + Lang.tr(lang, row.type().verbKey()) + " ").withStyle(ChatFormatting.WHITE));
 
-        String item = Ids.shortId(row.material());
-        if (row.amount() != 1) {
-            item = row.amount() + " x " + item;
-        }
+        String item = RowText.subject(row);
         String hover = row.material();
-        if (NetworkStorages.DATA_MARKER.equals(row.data())) {
-            hover += "\nvia storage network terminal";
+        String details = RowText.details(lang, row);
+        if (details != null) {
+            hover += "\n" + details;
+        } else if (NetworkStorages.DATA_MARKER.equals(row.data())) {
+            hover += "\n" + Lang.tr(lang, "detail.via_network");
         } else if (ItemStorages.isMarker(row.data())) {
-            hover += "\nin " + ItemStorages.describe(row.data());
-        } else if (row.data() != null) {
+            hover += "\n" + Lang.tr(lang, "detail.in", ItemStorages.describe(lang, row.data()));
+        } else if (row.data() != null && (row.type() == ActionType.BLOCK_BREAK || row.type() == ActionType.BLOCK_PLACE)) {
             hover += row.data();
         }
         line.append(Component.literal(item).withStyle(Style.EMPTY.withColor(ChatFormatting.DARK_AQUA)
                 .withHoverEvent(new HoverEvent(HoverEvent.Action.SHOW_TEXT, Component.literal(hover)))));
+        String where = RowText.where(lang, row);
+        if (where != null) {
+            line.append(Component.literal(" → " + where).withStyle(ChatFormatting.GRAY));
+        }
         if (row.contentsCount() > 0 && row.contents() != null) {
-            line.append(Component.literal(" [%d items]".formatted(row.contentsCount()))
+            line.append(Component.literal(" " + Lang.tr(lang, "lookup.contents", row.contentsCount()))
                     .withStyle(Style.EMPTY.withColor(ChatFormatting.GOLD)
                             .withHoverEvent(new HoverEvent(HoverEvent.Action.SHOW_TEXT, Component.literal(row.contents())))));
         }
@@ -141,26 +147,26 @@ public final class LookupPresenter {
             line.append(Component.literal(" (%d %d %d %s)".formatted(row.x(), row.y(), row.z(), Ids.shortId(row.world())))
                     .withStyle(Style.EMPTY.withColor(ChatFormatting.GRAY)
                             .withClickEvent(new ClickEvent(ClickEvent.Action.RUN_COMMAND, tp))
-                            .withHoverEvent(new HoverEvent(HoverEvent.Action.SHOW_TEXT, Component.literal("Teleport")))));
+                            .withHoverEvent(new HoverEvent(HoverEvent.Action.SHOW_TEXT, Lang.text(lang, "lookup.teleport")))));
         }
         return line;
     }
 
-    private static Component pageFooter(int page, int pages) {
+    private static Component pageFooter(String lang, int page, int pages) {
         MutableComponent footer = Component.literal("");
         if (page > 1) {
-            footer.append(pageLink("◀ ", page - 1));
+            footer.append(pageLink(lang, "◀ ", page - 1));
         }
-        footer.append(Component.literal("Page %d/%d".formatted(page, pages)).withStyle(ChatFormatting.WHITE));
+        footer.append(Lang.text(lang, "lookup.page", page, pages).withStyle(ChatFormatting.WHITE));
         if (page < pages) {
-            footer.append(pageLink(" ▶", page + 1));
+            footer.append(pageLink(lang, " ▶", page + 1));
         }
         return footer;
     }
 
-    private static Component pageLink(String text, int page) {
+    private static Component pageLink(String lang, String text, int page) {
         return Component.literal(text).withStyle(Style.EMPTY.withColor(ChatFormatting.DARK_AQUA)
                 .withClickEvent(new ClickEvent(ClickEvent.Action.RUN_COMMAND, "/ml page " + page))
-                .withHoverEvent(new HoverEvent(HoverEvent.Action.SHOW_TEXT, Component.literal("Page " + page))));
+                .withHoverEvent(new HoverEvent(HoverEvent.Action.SHOW_TEXT, Lang.text(lang, "lookup.page_link", page))));
     }
 }

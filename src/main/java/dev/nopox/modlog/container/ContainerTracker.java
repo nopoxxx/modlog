@@ -5,7 +5,9 @@ import dev.nopox.modlog.ModLogConfig;
 import dev.nopox.modlog.action.ActionType;
 import dev.nopox.modlog.action.Actor;
 import dev.nopox.modlog.action.LoggedAction;
+import dev.nopox.modlog.compat.EntityInventories;
 import dev.nopox.modlog.compat.ItemStorages;
+import dev.nopox.modlog.listener.FluidTracker;
 import dev.nopox.modlog.compat.NetworkStorages;
 import dev.nopox.modlog.util.NbtBytes;
 import net.minecraft.core.BlockPos;
@@ -16,12 +18,14 @@ import net.minecraft.network.PacketListener;
 import net.minecraft.network.protocol.Packet;
 import net.minecraft.network.protocol.game.ServerboundContainerButtonClickPacket;
 import net.minecraft.network.protocol.game.ServerboundContainerClickPacket;
+import net.minecraft.network.protocol.game.ServerboundInteractPacket;
 import net.minecraft.network.protocol.game.ServerboundPlaceRecipePacket;
 import net.minecraft.network.protocol.game.ServerboundPlayerActionPacket;
 import net.minecraft.network.protocol.game.ServerboundUseItemOnPacket;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.network.ServerGamePacketListenerImpl;
+import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.inventory.AbstractContainerMenu;
 import net.minecraft.world.inventory.Slot;
@@ -31,6 +35,7 @@ import net.minecraft.world.level.block.entity.BlockEntity;
 import net.neoforged.bus.api.EventPriority;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.neoforge.event.entity.item.ItemTossEvent;
+import net.neoforged.neoforge.items.IItemHandler;
 import net.neoforged.neoforge.event.entity.player.PlayerContainerEvent;
 import net.neoforged.neoforge.event.entity.player.PlayerEvent;
 import org.jetbrains.annotations.Nullable;
@@ -128,7 +133,15 @@ public final class ContainerTracker {
 
     // ---- Packet handling ----
 
-    private static void handleVanilla(ServerPlayer player, Packet<?> packet, Runnable task) {
+    private static void handleVanilla(ServerPlayer player, Packet<?> packet, Runnable packetTask) {
+        Runnable task = FluidTracker.around(player, packet, packetTask);
+        if (packet instanceof ServerboundInteractPacket interact && active == null && ModLogConfig.LOG_CONTAINERS.get()) {
+            Entity target = interact.getTarget(player.serverLevel());
+            if (target != null && EntityInventories.holdsItems(target)) {
+                captureEntity(player, target, task);
+                return;
+            }
+        }
         ServerLevel level = player.serverLevel();
         @Nullable BlockPos target = null;
         @Nullable String marker = null;
@@ -174,6 +187,47 @@ public final class ContainerTracker {
                 USING_ON.remove(player.getUUID());
             }
         }
+    }
+
+    /**
+     * Item frames and armor stands: compare the entity's own items, since taking an item off a frame drops it on the
+     * ground rather than into the player's inventory.
+     */
+    private static void captureEntity(ServerPlayer player, Entity entity, Runnable task) {
+        Map<ItemKey, Integer> before = entityItems(entity);
+        task.run();
+        // Destroying it (an armor stand broken by hitting it) is logged as a kill, with its items
+        if (entity.isRemoved()) {
+            return;
+        }
+        Map<ItemKey, Integer> delta = new HashMap<>();
+        entityItems(entity).forEach((k, n) -> delta.merge(k, n, Integer::sum));
+        before.forEach((k, n) -> delta.merge(k, -n, Integer::sum));
+
+        long now = System.currentTimeMillis();
+        ServerLevel level = (ServerLevel) entity.level();
+        BlockPos pos = entity.blockPosition();
+        delta.forEach((key, n) -> {
+            if (n == 0) {
+                return;
+            }
+            ItemStack stack = key.stack();
+            ModLog.log(new LoggedAction(now, Actor.of(player), level.dimension().location().toString(), pos.getX(), pos.getY(),
+                    pos.getZ(), n > 0 ? ActionType.CONTAINER_ADD : ActionType.CONTAINER_REMOVE,
+                    BuiltInRegistries.ITEM.getKey(stack.getItem()).toString(), EntityInventories.marker(entity), Math.abs(n),
+                    NbtBytes.compress((CompoundTag) stack.save(level.registryAccess())), null, 0));
+        });
+    }
+
+    private static Map<ItemKey, Integer> entityItems(Entity entity) {
+        Map<ItemKey, Integer> items = new HashMap<>();
+        IItemHandler handler = EntityInventories.of(entity);
+        if (handler != null) {
+            for (int i = 0; i < handler.getSlots(); i++) {
+                add(items, handler.getStackInSlot(i));
+            }
+        }
+        return items;
     }
 
     private static <T> T capture(ServerPlayer player, ServerLevel level, BlockPos pos, @Nullable String marker, Supplier<T> task) {

@@ -16,7 +16,12 @@ Clients don't need the mod. It also runs on [Arclight](https://github.com/IzzelA
   terminals and backpacks. It works by comparing the player's own items before and after each container interaction,
   so it doesn't need per-mod GUI hooks.
 - Items players drop and pick up, and items backpack magnet/pickup upgrades pull in.
-- Create mechanical drills and saws.
+- Entities: mobs killed by players (and named, tamed and villager deaths by anything), armor stands, item frames,
+  paintings and vehicles destroyed by players — with their data and drops, so a rollback brings them back.
+- Items put on and taken off item frames and armor stands.
+- Fluids placed and picked up with buckets, sign text edits.
+- Chat messages and commands (lookups only).
+- Create mechanical drills and saws, stationary and on moving contraptions.
 
 Actions are confirmed at the end of the tick, so actions cancelled by other mods or Bukkit plugins aren't logged.
 
@@ -32,8 +37,10 @@ Actions are confirmed at the end of the tick, so actions cancelled by other mods
   Apply / Cancel buttons.
 - Never overwrites a block it didn't log; works in slices per tick to avoid lag.
 - **Anti-dupe:** a rollback takes back what the rolled-back actions gave out — items taken from containers and drops of
-  broken blocks — from the ground or the player's inventory, following items the same rollback already moved. Anything
-  it can't find is reported as a possible duplicate.
+  broken blocks — from the ground or the player's inventory (offline players' saved inventories included), following
+  items the same rollback already moved. Anything it can't find is reported as a possible duplicate.
+
+**Languages:** English and Russian. Players get their client's language; the console uses `general.language`.
 
 ## Supported mods
 
@@ -82,7 +89,7 @@ Parameters:
 | `u:` | `u:Steve,Alex`, `u:#tnt`, `u:#creeper` | Players, or non-player sources prefixed with `#` |
 | `t:` | `t:30m`, `t:2h30m`, `t:7d` | Time window (`s`, `m`, `h`, `d`, `w`) |
 | `r:` | `r:10`, `r:#world`, `r:#global` | Radius around you, the current dimension, or everywhere |
-| `a:` | `a:-block`, `a:container` | `block`, `+block`, `-block`, `container`, `+container`, `-container`, `item`, `pickup`, `drop` |
+| `a:` | `a:-block`, `a:container` | `block`, `+block`, `-block`, `container`, `+container`, `-container`, `item`, `pickup`, `drop`, `kill`, `sign`, `chat`, `command` |
 | `b:` | `b:chest,ae2:drive` | Blocks or items (`minecraft:` is implied) |
 
 To clean up after a player, roll back by player without a radius: `/ml rb u:Griefer t:2h`. A radius limits the
@@ -94,13 +101,14 @@ rollback to that area, and items carried out of it won't be followed.
 
 | Key | Default | |
 |---|---|---|
+| `general.language` | `en_us` | Console language and fallback (`en_us`, `ru_ru`) |
 | `database.sqliteFile` | `modlog/modlog.db` | Database file, relative to the server directory |
 | `database.flushIntervalMs` | `500` | How often queued actions are written |
 | `lookup.pageSize` | `7` | Lines per page in chat |
 | `rollback.actionsPerTick` | `500` | Lower it if large rollbacks lag the server |
 | `rollback.maxActions` | `200000` | Larger rollbacks are refused |
 | `rollback.reclaimItems` | `true` | Anti-dupe (see above) |
-| `logging.blockBreak`, `blockPlace`, `explosions`, `containers`, `itemDrops`, `itemPickups` | `true` | What to log |
+| `logging.blockBreak`, `blockPlace`, `explosions`, `containers`, `itemDrops`, `itemPickups`, `entityKills`, `fluids`, `signs`, `chat`, `commands` | `true` | What to log |
 
 ## Building
 
@@ -115,8 +123,8 @@ Releases: pushing a tag like `v0.9.0` builds the jar with that version and attac
 
 ## Limitations
 
-See [docs/ROADMAP.md](docs/ROADMAP.md) for what's planned. Notably: Create contraptions (moving drills) aren't
-logged, items can't be taken back from offline players, and only SQLite is supported for now.
+See [docs/ROADMAP.md](docs/ROADMAP.md) for what's planned. Notably: waterlogging isn't logged, entities in unloaded
+chunks can't be rolled back, and only SQLite is supported for now.
 
 ## License
 

@@ -32,12 +32,8 @@ public final class ItemStorages {
         /** Whether the stack is the item holding the storage (so it isn't counted as a moved item). */
         boolean isHolder(ItemStack stack, String marker);
 
-        /** Short human-readable form of a marker. */
-        default String describe(String marker) {
-            int colon = marker.indexOf(':');
-            String id = marker.substring(colon + 1);
-            return marker.substring(0, colon) + " " + id.substring(0, Math.min(8, id.length()));
-        }
+        /** Short human-readable form of a marker in the given language. */
+        String describe(String language, String marker);
     }
 
     private static final List<Provider> PROVIDERS = new ArrayList<>();
@@ -47,6 +43,7 @@ public final class ItemStorages {
 
     public static void init() {
         PROVIDERS.add(new PlayerInventories());
+        PROVIDERS.add(new EntityInventories());
         if (ModList.get().isLoaded("sophisticatedbackpacks")) {
             PROVIDERS.add(new SophisticatedBackpacksCompat());
             BackpackPickups.register(NeoForge.EVENT_BUS);
@@ -70,9 +67,9 @@ public final class ItemStorages {
     }
 
     /** Short human-readable form of a marker, e.g. {@code backpack 1a2b3c4d}. */
-    public static String describe(String marker) {
+    public static String describe(String language, String marker) {
         Provider provider = provider(marker);
-        return provider == null ? marker : provider.describe(marker);
+        return provider == null ? marker : provider.describe(language, marker);
     }
 
     /** Marker for a player's own inventory. */

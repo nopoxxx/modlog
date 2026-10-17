@@ -8,8 +8,11 @@ import dev.nopox.modlog.compat.NetworkStorages;
 import dev.nopox.modlog.db.LookupQuery;
 import dev.nopox.modlog.db.LookupRow;
 import dev.nopox.modlog.db.Storage;
+import dev.nopox.modlog.lookup.RowText;
 import dev.nopox.modlog.rollback.RollbackManager;
 import dev.nopox.modlog.util.Ids;
+import dev.nopox.modlog.util.Lang;
+import dev.nopox.modlog.util.ModLogException;
 import dev.nopox.modlog.util.TimeFormat;
 import net.minecraft.ChatFormatting;
 import net.minecraft.core.BlockPos;
@@ -33,6 +36,7 @@ import net.minecraft.world.inventory.MenuType;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
+import net.minecraft.world.item.SpawnEggItem;
 import net.minecraft.world.item.component.ItemLore;
 import net.minecraft.world.level.block.Block;
 import org.jetbrains.annotations.Nullable;
@@ -74,10 +78,12 @@ public final class LogBrowser {
     private static final int SLOT_NEXT = 53;
 
     private enum ActionFilter {
-        ALL(Items.COMPASS, "All actions", EnumSet.noneOf(ActionType.class)),
-        BLOCKS(Items.GRASS_BLOCK, "Blocks", EnumSet.of(ActionType.BLOCK_BREAK, ActionType.BLOCK_PLACE)),
-        CONTAINERS(Items.CHEST, "Containers", EnumSet.of(ActionType.CONTAINER_ADD, ActionType.CONTAINER_REMOVE, ActionType.ITEM_PICKUP)),
-        ITEMS(Items.HOPPER, "Item drops/pickups", EnumSet.of(ActionType.ITEM_DROP, ActionType.ITEM_PICKUP));
+        ALL(Items.COMPASS, "gui.filter.all", EnumSet.noneOf(ActionType.class)),
+        BLOCKS(Items.GRASS_BLOCK, "gui.filter.blocks", EnumSet.of(ActionType.BLOCK_BREAK, ActionType.BLOCK_PLACE, ActionType.SIGN_EDIT)),
+        CONTAINERS(Items.CHEST, "gui.filter.containers", EnumSet.of(ActionType.CONTAINER_ADD, ActionType.CONTAINER_REMOVE, ActionType.ITEM_PICKUP)),
+        ITEMS(Items.HOPPER, "gui.filter.items", EnumSet.of(ActionType.ITEM_DROP, ActionType.ITEM_PICKUP)),
+        KILLS(Items.IRON_SWORD, "gui.filter.kills", EnumSet.of(ActionType.ENTITY_KILL)),
+        CHAT(Items.WRITABLE_BOOK, "gui.filter.chat", EnumSet.of(ActionType.CHAT, ActionType.COMMAND));
 
         final Item icon;
         final String label;
@@ -90,11 +96,11 @@ public final class LogBrowser {
         }
     }
 
-    private static final String[] TIME_LABELS = {"1 hour", "6 hours", "24 hours", "7 days", "30 days", "all time"};
+    private static final String[] TIME_LABELS = {"gui.time.1h", "gui.time.6h", "gui.time.24h", "gui.time.7d", "gui.time.30d", "gui.time.all"};
     private static final long[] TIME_MS = {3_600_000L, 21_600_000L, 86_400_000L, 604_800_000L, 2_592_000_000L, -1};
     private static final int TIME_ALL = TIME_MS.length - 1;
 
-    private static final String[] AREA_LABELS = {"10 blocks", "30 blocks", "100 blocks", "this world", "everywhere"};
+    private static final String[] AREA_LABELS = {"gui.area.10", "gui.area.30", "gui.area.100", "gui.area.world", "gui.area.global"};
     private static final int[] AREA_RADIUS = {10, 30, 100, -1, -1};
     private static final int AREA_GLOBAL = 4;
     private static final int MAX_TYPED_RADIUS = 10_000;
@@ -111,6 +117,8 @@ public final class LogBrowser {
     private @Nullable Menu menu;
     private boolean closed;
 
+    /** The viewer's language, refreshed on every render. */
+    private String lang = Lang.FALLBACK;
     private int actionFilter;
     private int timeIndex = 2;
     private int areaIndex = 1;
@@ -185,7 +193,7 @@ public final class LogBrowser {
                     if (error != null) {
                         Throwable cause = error instanceof CompletionException && error.getCause() != null ? error.getCause() : error;
                         ModLog.LOGGER.error("GUI lookup failed", cause);
-                        player.sendSystemMessage(Component.literal("Lookup failed: " + cause.getMessage()).withStyle(ChatFormatting.RED));
+                        player.sendSystemMessage(Lang.text(player, "error.lookup_failed", cause.getMessage()).withStyle(ChatFormatting.RED));
                     } else {
                         rows = result.rows();
                         total = result.total();
@@ -298,23 +306,23 @@ public final class LogBrowser {
         Consumer<String> apply;
         switch (slot) {
             case SLOT_TIME -> {
-                prompt = "Time, e.g. 10m, 2h30m, 1d";
+                prompt = Lang.tr(player, "gui.prompt.time");
                 initial = customTimeMs != null ? TimeFormat.duration(customTimeMs) : "";
                 apply = text -> customTimeMs = TimeFormat.parseDuration(text);
             }
             case SLOT_AREA -> {
-                prompt = "Radius in blocks, e.g. 25";
+                prompt = Lang.tr(player, "gui.prompt.radius");
                 initial = customRadius > 0 ? Integer.toString(customRadius) : "";
                 apply = text -> {
                     int radius = Integer.parseInt(text);
                     if (radius <= 0 || radius > MAX_TYPED_RADIUS) {
-                        throw new IllegalArgumentException("radius must be 1.." + MAX_TYPED_RADIUS);
+                        throw new ModLogException("error.radius_range", MAX_TYPED_RADIUS);
                     }
                     customRadius = radius;
                 };
             }
             case SLOT_PLAYER -> {
-                prompt = "Player name, or #tnt, #creeper";
+                prompt = Lang.tr(player, "gui.prompt.player");
                 initial = actors.size() == 1 ? actors.iterator().next() : "";
                 apply = text -> {
                     actors.clear();
@@ -322,7 +330,7 @@ public final class LogBrowser {
                 };
             }
             case SLOT_MATERIAL -> {
-                prompt = "Block/item id, e.g. chest, ae2:...";
+                prompt = Lang.tr(player, "gui.prompt.material");
                 initial = materials.size() == 1 ? Ids.shortId(materials.iterator().next()) : "";
                 apply = text -> {
                     String id = text.toLowerCase(Locale.ROOT);
@@ -340,8 +348,9 @@ public final class LogBrowser {
                     apply.accept(text);
                     page = 1;
                 } catch (IllegalArgumentException e) {
-                    player.sendSystemMessage(Component.literal("Invalid value '" + text + "': " + e.getMessage())
-                            .withStyle(ChatFormatting.RED));
+                    String reason = e instanceof ModLogException m ? Lang.tr(player, m.key(), m.args())
+                            : Lang.tr(player, "error.not_a_number");
+                    player.sendSystemMessage(Lang.text(player, "error.invalid_value", text, reason).withStyle(ChatFormatting.RED));
                 }
             }
             show();
@@ -375,7 +384,7 @@ public final class LogBrowser {
             return;
         }
         if (timeWindow() == null) {
-            player.sendSystemMessage(Component.literal("Pick a time range first, rolling back all time isn't allowed from here")
+            player.sendSystemMessage(Lang.text(player, "gui.bulk.all_time_refused")
                     .withStyle(ChatFormatting.RED));
             return;
         }
@@ -394,7 +403,7 @@ public final class LogBrowser {
         if (Permissions.check(player, Permissions.ROLLBACK)) {
             return true;
         }
-        player.sendSystemMessage(Component.literal("You don't have permission to roll back (modlog.rollback)")
+        player.sendSystemMessage(Lang.text(player, "error.no_rollback_permission")
                 .withStyle(ChatFormatting.RED));
         return false;
     }
@@ -402,7 +411,7 @@ public final class LogBrowser {
     private void teleport(LookupRow row) {
         ServerLevel level = player.server.getLevel(ResourceKey.create(Registries.DIMENSION, ResourceLocation.parse(row.world())));
         if (level == null) {
-            player.sendSystemMessage(Component.literal("World " + row.world() + " isn't loaded").withStyle(ChatFormatting.RED));
+            player.sendSystemMessage(Lang.text(player, "error.world_not_loaded", row.world()).withStyle(ChatFormatting.RED));
             return;
         }
         player.closeContainer();
@@ -416,32 +425,32 @@ public final class LogBrowser {
     // ---- Rendering ----
 
     private void render() {
+        lang = Lang.of(player);
         container.clearContent();
         ActionFilter filter = ActionFilter.values()[actionFilter];
-        container.setItem(SLOT_ACTIONS, button(filter.icon, "Show: " + filter.label,
+        container.setItem(SLOT_ACTIONS, button(filter.icon, t("gui.show", t(filter.label)),
                 options(ActionFilter.values().length, actionFilter, i -> ActionFilter.values()[i].label)));
         container.setItem(SLOT_TIME, button(Items.CLOCK, customTimeMs != null
-                        ? "Time: last " + TimeFormat.duration(customTimeMs) + " (typed)"
-                        : "Time: last " + TIME_LABELS[timeIndex],
+                        ? t("gui.time.typed", TimeFormat.duration(customTimeMs))
+                        : t("gui.time", t(TIME_LABELS[timeIndex])),
                 withHint(options(TIME_LABELS.length, customTimeMs != null ? -1 : timeIndex, i -> TIME_LABELS[i]),
-                        "Shift+right-click: type your own, e.g. 10m")));
+                        t("gui.time.type_hint"))));
         container.setItem(SLOT_AREA, button(Items.SPYGLASS, customRadius > 0
-                        ? "Area: %d blocks (typed)".formatted(customRadius)
-                        : "Area: " + AREA_LABELS[areaIndex],
+                        ? t("gui.area.typed", customRadius)
+                        : t("gui.area", t(AREA_LABELS[areaIndex])),
                 withHint(withHint(options(AREA_LABELS.length, customRadius > 0 ? -1 : areaIndex, i -> AREA_LABELS[i]),
-                                "Shift+right-click: type a radius"),
-                        "Around %d %d %d (where you opened this)".formatted(center.getX(), center.getY(), center.getZ()))));
-        container.setItem(SLOT_PLAYER, button(Items.PLAYER_HEAD, "Player filter: " + (actors.isEmpty() ? "all players" : String.join(", ", actors)),
-                filterLore(actors.isEmpty(), "Shows only actions done by this player",
-                        "Right-click an entry: use its player", "Shift+right-click: type a name")));
-        container.setItem(SLOT_MATERIAL, button(Items.ITEM_FRAME, "Block/item filter: " + (materials.isEmpty() ? "all"
+                                t("gui.area.type_hint")),
+                        t("gui.area.around", center.getX(), center.getY(), center.getZ()))));
+        container.setItem(SLOT_PLAYER, button(Items.PLAYER_HEAD,
+                t("gui.player", actors.isEmpty() ? t("gui.player.all") : String.join(", ", actors)),
+                filterLore(actors.isEmpty(), t("gui.player.what"), t("gui.player.from_entry"), t("gui.player.type_hint"))));
+        container.setItem(SLOT_MATERIAL, button(Items.ITEM_FRAME, t("gui.material", materials.isEmpty() ? t("gui.material.all")
                         : String.join(", ", materials.stream().map(Ids::shortId).toList())),
-                filterLore(materials.isEmpty(), "Shows only actions with this block/item",
-                        "Shift+right-click an entry: use its block/item", "Shift+right-click: type an id")));
+                filterLore(materials.isEmpty(), t("gui.material.what"), t("gui.material.from_entry"), t("gui.material.type_hint"))));
         container.setItem(SLOT_ROLLED_BACK, button(hideRolledBack ? Items.GRAY_DYE : Items.LIME_DYE,
-                "Rolled back actions: " + (hideRolledBack ? "hidden" : "shown"), List.of(hint("Click to toggle"))));
-        container.setItem(SLOT_REFRESH, button(Items.SUNFLOWER, "Refresh", List.of()));
-        container.setItem(SLOT_CLOSE, button(Items.BARRIER, "Close", List.of()));
+                t(hideRolledBack ? "gui.rolled_back.hidden" : "gui.rolled_back.shown"), List.of(hint(t("gui.click_to_toggle")))));
+        container.setItem(SLOT_REFRESH, button(Items.SUNFLOWER, t("gui.refresh"), List.of()));
+        container.setItem(SLOT_CLOSE, button(Items.BARRIER, t("gui.close"), List.of()));
 
         long now = System.currentTimeMillis();
         for (int i = 0; i < rows.size() && i < PAGE_SIZE; i++) {
@@ -449,29 +458,34 @@ public final class LogBrowser {
         }
 
         if (page > 1) {
-            container.setItem(SLOT_PREV, button(Items.ARROW, "Previous page", List.of()));
+            container.setItem(SLOT_PREV, button(Items.ARROW, t("gui.previous_page"), List.of()));
         }
         if (page < pages()) {
-            container.setItem(SLOT_NEXT, button(Items.ARROW, "Next page", List.of()));
+            container.setItem(SLOT_NEXT, button(Items.ARROW, t("gui.next_page"), List.of()));
         }
-        container.setItem(SLOT_INFO, button(Items.PAPER, loading ? "Loading..." : "Page %d/%d".formatted(page, pages()),
-                List.of(line(total + " actions match", ChatFormatting.GRAY))));
-        container.setItem(SLOT_ROLLBACK, bulkButton(SLOT_ROLLBACK, Items.TNT, "Roll back all %d shown actions"));
-        container.setItem(SLOT_RESTORE, bulkButton(SLOT_RESTORE, Items.EMERALD, "Restore all %d shown actions"));
-        container.setItem(SLOT_UNDO, button(Items.RECOVERY_COMPASS, "Undo my last rollback/restore", List.of()));
+        container.setItem(SLOT_INFO, button(Items.PAPER, loading ? t("gui.loading") : t("gui.page", page, pages()),
+                List.of(line(t("gui.matches", total), ChatFormatting.GRAY))));
+        container.setItem(SLOT_ROLLBACK, bulkButton(SLOT_ROLLBACK, Items.TNT, "gui.bulk.rollback"));
+        container.setItem(SLOT_RESTORE, bulkButton(SLOT_RESTORE, Items.EMERALD, "gui.bulk.restore"));
+        container.setItem(SLOT_UNDO, button(Items.RECOVERY_COMPASS, t("gui.undo"), List.of()));
 
         if (menu != null) {
             menu.broadcastChanges();
         }
     }
 
+    /** Translation in the viewer's language. */
+    private String t(String key, Object... args) {
+        return Lang.tr(lang, key, args);
+    }
+
     private ItemStack bulkButton(int slot, Item icon, String text) {
         boolean armed = confirm != null && confirm.slot == slot;
-        String title = armed ? "Click again to confirm" : text.formatted(total);
+        String title = armed ? t("gui.bulk.confirm") : t(text, total);
         List<Component> lore = new ArrayList<>();
-        lore.add(line("Uses the filters above", ChatFormatting.GRAY));
+        lore.add(line(t("gui.bulk.uses_filters"), ChatFormatting.GRAY));
         if (timeWindow() == null) {
-            lore.add(line("Pick a time range first", ChatFormatting.RED));
+            lore.add(line(t("gui.bulk.pick_time"), ChatFormatting.RED));
         }
         ItemStack stack = button(icon, title, lore);
         if (armed) {
@@ -483,40 +497,53 @@ public final class LogBrowser {
     private ItemStack entry(LookupRow row, long now) {
         ItemStack stack = new ItemStack(iconOf(row), Math.max(1, Math.min(row.amount(), 64)));
         MutableComponent name = Component.literal(row.actor()).withStyle(ChatFormatting.DARK_AQUA)
-                .append(Component.literal(" " + row.type().verb + " ").withStyle(ChatFormatting.WHITE))
-                .append(Component.literal((row.amount() > 1 ? row.amount() + " x " : "") + Ids.shortId(row.material()))
+                .append(Component.literal(" " + t(row.type().verbKey()) + " ").withStyle(ChatFormatting.WHITE))
+                .append(Component.literal(RowText.subject(row))
                         .withStyle(ChatFormatting.GOLD));
+        String where = RowText.where(lang, row);
+        if (where != null) {
+            name.append(Component.literal(" → " + where).withStyle(ChatFormatting.GRAY));
+        }
         if (row.rolledBack()) {
             name.withStyle(ChatFormatting.STRIKETHROUGH);
         }
 
         List<Component> lore = new ArrayList<>();
-        lore.add(line(TimeFormat.ago(now - row.time()), ChatFormatting.GRAY));
+        lore.add(line(TimeFormat.ago(lang, now - row.time()), ChatFormatting.GRAY));
         lore.add(line("%d %d %d  %s".formatted(row.x(), row.y(), row.z(), Ids.shortId(row.world())), ChatFormatting.GRAY));
+        String details = RowText.details(lang, row);
+        if (details != null) {
+            lore.add(line(details, ChatFormatting.GRAY));
+        }
         if (row.contentsCount() > 0 && row.contents() != null) {
-            lore.add(line("Contained %d items: %s".formatted(row.contentsCount(), row.contents()), ChatFormatting.GOLD));
+            lore.add(line(t("gui.entry.contained", row.contentsCount(), row.contents()), ChatFormatting.GOLD));
         }
         if (NetworkStorages.DATA_MARKER.equals(row.data())) {
-            lore.add(line("Via storage network terminal", ChatFormatting.AQUA));
+            lore.add(line(t("detail.via_network"), ChatFormatting.AQUA));
         } else if (ItemStorages.isMarker(row.data())) {
-            lore.add(line("In " + ItemStorages.describe(row.data()), ChatFormatting.AQUA));
+            lore.add(line(t("detail.in", ItemStorages.describe(lang, row.data())), ChatFormatting.AQUA));
         }
         if (row.rolledBack()) {
-            lore.add(line("Rolled back", ChatFormatting.RED));
+            lore.add(line(t("gui.entry.rolled_back"), ChatFormatting.RED));
         }
         lore.add(Component.empty());
-        lore.add(hint("Click: teleport"));
-        lore.add(hint("Right-click: only this player"));
-        lore.add(hint("Shift+click: " + (row.rolledBack() ? "restore" : "roll back") + " this entry"));
-        lore.add(hint("Shift+right-click: only this block/item"));
+        lore.add(hint(t("gui.entry.teleport")));
+        lore.add(hint(t("gui.entry.only_player")));
+        lore.add(hint(t(row.rolledBack() ? "gui.entry.restore" : "gui.entry.rollback")));
+        lore.add(hint(t("gui.entry.only_material")));
         return decorate(stack, name, lore);
     }
 
     private static Item iconOf(LookupRow row) {
         ResourceLocation id = ResourceLocation.tryParse(row.material());
         Item item = Items.AIR;
+        if (id != null && row.type() == ActionType.ENTITY_KILL) {
+            SpawnEggItem egg = BuiltInRegistries.ENTITY_TYPE.getOptional(id).map(SpawnEggItem::byId).orElse(null);
+            return egg != null ? egg : Items.BONE;
+        }
         if (id != null) {
-            boolean block = row.type() == ActionType.BLOCK_BREAK || row.type() == ActionType.BLOCK_PLACE;
+            boolean block = row.type() == ActionType.BLOCK_BREAK || row.type() == ActionType.BLOCK_PLACE
+                    || row.type() == ActionType.SIGN_EDIT;
             item = block
                     ? BuiltInRegistries.BLOCK.getOptional(id).map(Block::asItem).orElse(Items.AIR)
                     : BuiltInRegistries.ITEM.getOptional(id).orElse(Items.AIR);
@@ -529,23 +556,25 @@ public final class LogBrowser {
         String of(int index);
     }
 
-    private static List<Component> options(int count, int selected, Label label) {
+    /** @param label translation key of each option */
+    private List<Component> options(int count, int selected, Label label) {
         List<Component> lore = new ArrayList<>();
         for (int i = 0; i < count; i++) {
-            lore.add(i == selected ? line("▶ " + label.of(i), ChatFormatting.YELLOW) : line("  " + label.of(i), ChatFormatting.GRAY));
+            String text = t(label.of(i));
+            lore.add(i == selected ? line("▶ " + text, ChatFormatting.YELLOW) : line("  " + text, ChatFormatting.GRAY));
         }
-        lore.add(hint("Click: next, right-click: previous"));
+        lore.add(hint(t("gui.cycle_hint")));
         return lore;
     }
 
-    private static List<Component> filterLore(boolean empty, String what, String... howToSet) {
+    private List<Component> filterLore(boolean empty, String what, String... howToSet) {
         List<Component> lore = new ArrayList<>();
         lore.add(line(what, ChatFormatting.GRAY));
         for (String how : howToSet) {
             lore.add(hint(how));
         }
         if (!empty) {
-            lore.add(hint("Click: clear"));
+            lore.add(hint(t("gui.click_to_clear")));
         }
         return lore;
     }

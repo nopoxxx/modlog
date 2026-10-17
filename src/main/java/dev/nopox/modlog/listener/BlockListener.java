@@ -82,6 +82,12 @@ public final class BlockListener {
         }
     }
 
+    /** Logs a block change that already happened and needs no confirmation (e.g. a fluid placed with a bucket). */
+    public static void logNow(ServerLevel level, BlockPos pos, ActionType type, BlockState state, Actor actor) {
+        Pending p = new Pending(level, pos.immutable(), type, state, actor, System.currentTimeMillis(), null, null, List.of());
+        ModLog.log(toAction(p, state));
+    }
+
     private static void add(Pending pending) {
         PENDING.add(pending);
         if (pending.type == ActionType.BLOCK_BREAK) {

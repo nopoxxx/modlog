@@ -6,6 +6,7 @@
   "compatibilityLevel": "JAVA_21",
   "mixins": [
     "create.BlockBreakingKineticBlockEntityMixin",
+    "create.BlockBreakingMovementBehaviourMixin",
     "sophisticated.MagnetUpgradeWrapperMixin",
     "sophisticated.PickupResponseUpgradeMixin",
     "sophisticated.UpgradeWrapperBaseAccessor"

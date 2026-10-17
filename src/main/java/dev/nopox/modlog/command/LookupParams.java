@@ -2,6 +2,7 @@ package dev.nopox.modlog.command;
 
 import dev.nopox.modlog.action.ActionType;
 import dev.nopox.modlog.db.LookupQuery;
+import dev.nopox.modlog.util.ModLogException;
 import dev.nopox.modlog.util.TimeFormat;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.core.BlockPos;
@@ -18,7 +19,8 @@ import java.util.Set;
  *   u:Steve,Alex      actors (players, or #creeper, #tnt, ...)
  *   t:2h30m           time window
  *   r:10              radius around the executor; r:#global (default) or r:#world for the whole dimension
- *   a:-block          actions: block, +block, -block, container, +container, -container, item, pickup, drop
+ *   a:-block          actions: block, +block, -block, container, +container, -container, item, pickup, drop, kill, sign,
+ *                     chat, command
  *   b:stone,ae2:sky_stone_block   blocks / items (minecraft: is implied)
  * </pre>
  */
@@ -28,7 +30,7 @@ public final class LookupParams {
     private LookupParams() {
     }
 
-    /** @throws IllegalArgumentException with a user-facing message */
+    /** @throws ModLogException with a user-facing message */
     public static LookupQuery parse(String input, CommandSourceStack source) {
         Set<String> actors = new HashSet<>();
         Set<ActionType> actions = EnumSet.noneOf(ActionType.class);
@@ -44,7 +46,7 @@ public final class LookupParams {
             }
             int colon = token.indexOf(':');
             if (colon <= 0 || colon == token.length() - 1) {
-                throw new IllegalArgumentException("Invalid parameter '" + token + "'. Usage: " + USAGE);
+                throw new ModLogException("error.invalid_parameter", token, USAGE);
             }
             String key = token.substring(0, colon).toLowerCase(Locale.ROOT);
             String value = token.substring(colon + 1);
@@ -65,13 +67,13 @@ public final class LookupParams {
                             try {
                                 radius = Integer.parseInt(value);
                             } catch (NumberFormatException e) {
-                                throw new IllegalArgumentException("Invalid radius '" + value + "'");
+                                throw new ModLogException("error.invalid_radius", value);
                             }
                             if (radius < 0) {
-                                throw new IllegalArgumentException("Radius can't be negative");
+                                throw new ModLogException("error.negative_radius");
                             }
                             if (source.getEntity() == null) {
-                                throw new IllegalArgumentException("r:<number> needs a position; use r:#global from console");
+                                throw new ModLogException("error.radius_needs_position");
                             }
                             world = currentWorld(source);
                             center = BlockPos.containing(source.getPosition());
@@ -88,7 +90,7 @@ public final class LookupParams {
                         materials.add(m.contains(":") ? m : "minecraft:" + m);
                     }
                 }
-                default -> throw new IllegalArgumentException("Unknown parameter '" + key + ":'. Usage: " + USAGE);
+                default -> throw new ModLogException("error.unknown_parameter", key, USAGE);
             }
         }
         return new LookupQuery(actors, actions, materials, world, center, radius, since, Set.of(), false);
@@ -105,8 +107,11 @@ public final class LookupParams {
             case "pickup", "+item" -> EnumSet.of(ActionType.ITEM_PICKUP);
             case "drop", "-item" -> EnumSet.of(ActionType.ITEM_DROP);
             case "item" -> EnumSet.of(ActionType.ITEM_PICKUP, ActionType.ITEM_DROP);
-            default -> throw new IllegalArgumentException(
-                    "Unknown action '" + action + "'. Use block, +block, -block, container, +container, -container, item, pickup, drop");
+            case "kill" -> EnumSet.of(ActionType.ENTITY_KILL);
+            case "sign" -> EnumSet.of(ActionType.SIGN_EDIT);
+            case "chat" -> EnumSet.of(ActionType.CHAT);
+            case "command" -> EnumSet.of(ActionType.COMMAND);
+            default -> throw new ModLogException("error.unknown_action", action);
         };
     }
 

@@ -10,10 +10,13 @@ import dev.nopox.modlog.container.ContainerTracker;
 import dev.nopox.modlog.db.Storage;
 import dev.nopox.modlog.inspect.Inspector;
 import dev.nopox.modlog.listener.BlockListener;
+import dev.nopox.modlog.listener.ChatListener;
+import dev.nopox.modlog.listener.EntityListener;
 import dev.nopox.modlog.listener.ItemListener;
 import dev.nopox.modlog.listener.TntTracker;
 import dev.nopox.modlog.rollback.RollbackManager;
 import dev.nopox.modlog.rollback.RollbackPreview;
+import dev.nopox.modlog.util.Lang;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.fml.ModContainer;
 import net.neoforged.fml.common.Mod;
@@ -38,6 +41,7 @@ public final class ModLog {
     public ModLog(IEventBus modEventBus, ModContainer modContainer) {
         modContainer.registerConfig(ModConfig.Type.COMMON, ModLogConfig.SPEC);
         Permissions.register(NeoForge.EVENT_BUS);
+        Lang.init();
 
         NeoForge.EVENT_BUS.addListener(ModLog::onServerStarting);
         NeoForge.EVENT_BUS.addListener(ModLog::onServerStopped);
@@ -45,6 +49,8 @@ public final class ModLog {
         BlockListener.register(NeoForge.EVENT_BUS);
         ItemListener.register(NeoForge.EVENT_BUS);
         TntTracker.register(NeoForge.EVENT_BUS);
+        EntityListener.register(NeoForge.EVENT_BUS);
+        ChatListener.register(NeoForge.EVENT_BUS);
         ContainerTracker.register(NeoForge.EVENT_BUS);
         RollbackManager.register(NeoForge.EVENT_BUS);
         RollbackPreview.register(NeoForge.EVENT_BUS);

@@ -7,6 +7,7 @@ import dev.nopox.modlog.db.LookupQuery;
 import dev.nopox.modlog.db.Storage;
 import dev.nopox.modlog.db.StoredAction;
 import dev.nopox.modlog.util.Ids;
+import dev.nopox.modlog.util.Lang;
 import net.minecraft.ChatFormatting;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.ClickEvent;
@@ -60,7 +61,7 @@ public final class RollbackPreview {
     public static void start(ServerPlayer player, LookupQuery query, boolean rollback) {
         Storage storage = ModLog.storage();
         if (storage == null) {
-            player.sendSystemMessage(Component.literal("ModLog database is not available, see server log").withStyle(ChatFormatting.RED));
+            player.sendSystemMessage(Lang.text(player, "error.database_unavailable").withStyle(ChatFormatting.RED));
             return;
         }
         cancel(player, false);
@@ -68,13 +69,12 @@ public final class RollbackPreview {
         storage.fetchForRollback(RollbackManager.undoable(query), !rollback, max + 1).whenComplete((actions, error) -> player.server.execute(() -> {
             if (error != null) {
                 Throwable cause = error instanceof CompletionException && error.getCause() != null ? error.getCause() : error;
-                player.sendSystemMessage(Component.literal("Preview failed: " + cause.getMessage()).withStyle(ChatFormatting.RED));
+                player.sendSystemMessage(Lang.text(player, "error.preview_failed", cause.getMessage()).withStyle(ChatFormatting.RED));
             } else if (actions.isEmpty()) {
-                player.sendSystemMessage(Component.literal("Nothing to " + (rollback ? "roll back" : "restore") + ".")
+                player.sendSystemMessage(Lang.text(player, rollback ? "rollback.nothing" : "restore.nothing")
                         .withStyle(ChatFormatting.GRAY));
             } else if (actions.size() > max) {
-                player.sendSystemMessage(Component.literal("More than %d actions match; narrow it down with u:, t: or r:"
-                        .formatted(max)).withStyle(ChatFormatting.RED));
+                player.sendSystemMessage(Lang.text(player, "error.too_many", max).withStyle(ChatFormatting.RED));
             } else if (!player.hasDisconnected()) {
                 show(player, query, rollback, actions);
             }
@@ -111,7 +111,7 @@ public final class RollbackPreview {
                     boolean out = (a.type() != ActionType.CONTAINER_REMOVE) == rollback;
                     items.merge((out ? "- " : "+ ") + Ids.shortId(a.material()), a.amount(), Integer::sum);
                 }
-                case ITEM_DROP -> {
+                case ITEM_DROP, ENTITY_KILL, SIGN_EDIT, CHAT, COMMAND -> {
                 }
             }
         }
@@ -126,28 +126,28 @@ public final class RollbackPreview {
         }
         PREVIEWS.put(player.getUUID(), new Preview(query, rollback, level, shown));
 
-        String verb = rollback ? "Rollback" : "Restore";
-        player.sendSystemMessage(Component.literal("----- %s preview -----".formatted(verb)).withStyle(ChatFormatting.DARK_AQUA));
-        player.sendSystemMessage(Component.literal("%d actions; %d blocks would change (shown to you only)"
-                .formatted(actions.size(), shown.size())));
+        String lang = Lang.of(player);
+        String verb = Lang.tr(lang, rollback ? "rollback.name" : "restore.name");
+        player.sendSystemMessage(Lang.text(lang, "preview.header", verb).withStyle(ChatFormatting.DARK_AQUA));
+        player.sendSystemMessage(Lang.text(lang, "preview.summary", actions.size(), shown.size()));
         if (skipped > 0) {
-            player.sendSystemMessage(Component.literal(skipped + " block actions would be skipped (changed since)")
+            player.sendSystemMessage(Lang.text(lang, "preview.skipped", skipped)
                     .withStyle(ChatFormatting.GOLD));
         }
         if (elsewhere > 0) {
-            player.sendSystemMessage(Component.literal(elsewhere + " block actions are in other dimensions, not shown")
+            player.sendSystemMessage(Lang.text(lang, "preview.elsewhere", elsewhere)
                     .withStyle(ChatFormatting.GRAY));
         }
         if (simulated.size() > MAX_BLOCKS) {
-            player.sendSystemMessage(Component.literal("Only the first %d changed blocks are shown".formatted(MAX_BLOCKS))
+            player.sendSystemMessage(Lang.text(lang, "preview.capped", MAX_BLOCKS)
                     .withStyle(ChatFormatting.GRAY));
         }
         if (!items.isEmpty()) {
-            player.sendSystemMessage(Component.literal("Items in containers (+ put back, - taken out):"));
+            player.sendSystemMessage(Lang.text(lang, "preview.items"));
             int line = 0;
             for (Map.Entry<String, Integer> e : items.entrySet()) {
                 if (line++ == MAX_ITEM_LINES) {
-                    player.sendSystemMessage(Component.literal("  ... and %d more".formatted(items.size() - MAX_ITEM_LINES))
+                    player.sendSystemMessage(Component.literal("  " + Lang.tr(lang, "list.more", items.size() - MAX_ITEM_LINES))
                             .withStyle(ChatFormatting.GRAY));
                     break;
                 }
@@ -156,9 +156,11 @@ public final class RollbackPreview {
             }
         }
         MutableComponent buttons = Component.empty()
-                .append(button("[Apply]", "/ml preview confirm", ChatFormatting.GREEN, "Run the " + verb.toLowerCase()))
+                .append(button("[" + Lang.tr(lang, "button.apply") + "]", "/ml preview confirm", ChatFormatting.GREEN,
+                        Lang.tr(lang, "preview.apply_hint", verb)))
                 .append(" ")
-                .append(button("[Cancel]", "/ml preview cancel", ChatFormatting.RED, "Show the real world again"));
+                .append(button("[" + Lang.tr(lang, "button.cancel") + "]", "/ml preview cancel", ChatFormatting.RED,
+                        Lang.tr(lang, "preview.cancel_hint")));
         player.sendSystemMessage(buttons);
     }
 
@@ -166,7 +168,7 @@ public final class RollbackPreview {
     public static void confirm(ServerPlayer player) {
         Preview preview = PREVIEWS.remove(player.getUUID());
         if (preview == null) {
-            player.sendSystemMessage(Component.literal("No preview to apply. Add #preview to /ml rb or /ml rs.")
+            player.sendSystemMessage(Lang.text(player, "preview.none_to_apply")
                     .withStyle(ChatFormatting.RED));
             return;
         }
@@ -181,10 +183,10 @@ public final class RollbackPreview {
         if (preview != null) {
             resend(player, preview);
             if (tell) {
-                player.sendSystemMessage(Component.literal("Preview cancelled.").withStyle(ChatFormatting.GRAY));
+                player.sendSystemMessage(Lang.text(player, "preview.cancelled").withStyle(ChatFormatting.GRAY));
             }
         } else if (tell) {
-            player.sendSystemMessage(Component.literal("No preview to cancel.").withStyle(ChatFormatting.GRAY));
+            player.sendSystemMessage(Lang.text(player, "preview.none_to_cancel").withStyle(ChatFormatting.GRAY));
         }
     }
 

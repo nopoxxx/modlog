@@ -1,5 +1,6 @@
 package dev.nopox.modlog.compat;
 
+import dev.nopox.modlog.util.Lang;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.inventory.AbstractContainerMenu;
@@ -40,7 +41,7 @@ final class PlayerInventories implements ItemStorages.Provider {
     }
 
     @Override
-    public String describe(String marker) {
-        return "player inventory";
+    public String describe(String language, String marker) {
+        return Lang.tr(language, "where.player_inventory");
     }
 }

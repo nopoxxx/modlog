@@ -7,16 +7,14 @@ Ideas and planned work that isn't implemented yet. Done items are in git history
 Done in 0.8.x (see `rollback/Reclaimer`). Open points:
 
 - `#strict` flag: don't restore what couldn't be taken back (no dupes, but the victim may get back less).
-- Offline players: items can't be taken from them yet; editing `playerdata/<uuid>.dat` would allow it.
 - Area rollbacks (`r:`) only undo what happened inside the area; items carried out of it are reported, not chased.
 
 ## Backlog
 
-- Create contraptions: drills/saws on a moving contraption break blocks through a different path (movement
-  behaviours) and aren't logged yet; only stationary drills/saws are.
+- Waterlogging (buckets into slabs/stairs) isn't logged; only plain fluid blocks are.
+- Entities in unloaded chunks (item frames, armor stands) can't be rolled back until the chunk is loaded.
 - Items absorbed from the ground by blocks (Create basin, hoppers): only the player's drop is logged.
 - MySQL/MariaDB backend for large or multi-server setups.
-- More events: mob kills, item frames / armor stands, buckets (fluids), chat and commands.
 - Slow JVM exit after `stop` on the Arclight test server (not caused by ModLog; investigate with a thread dump).
 
 - **Interactions (like CoreProtect `a:click`)**: log who used buttons, levers, doors, trapdoors, fence gates,

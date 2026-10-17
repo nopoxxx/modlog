@@ -3,6 +3,7 @@ package dev.nopox.modlog.rollback;
 import com.mojang.authlib.GameProfile;
 import dev.nopox.modlog.container.ItemKey;
 import dev.nopox.modlog.util.Ids;
+import dev.nopox.modlog.util.Lang;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.server.MinecraftServer;
@@ -65,10 +66,12 @@ final class Reclaimer {
      */
     private final Map<Item, Integer> placedCredit = new HashMap<>();
     private final Map<Long, List<Taken>> takenByAction = new HashMap<>();
-    /** "item|who|reason" -> count of what couldn't be found */
+    /** "item|who|reason key" -> count of what couldn't be found */
     private final Map<String, Integer> missing = new TreeMap<>();
     private long currentAction;
     int fromPlayers;
+    /** Part of {@link #fromPlayers} taken from offline players' saved inventories. */
+    int fromOffline;
     int fromGround;
     int fromCredit;
 
@@ -192,9 +195,19 @@ final class Reclaimer {
     }
 
     private int fromTaker(String takerKey, ItemKey key, int wanted) {
-        ServerPlayer player = onlinePlayer(takerKey);
-        if (wanted <= 0 || player == null) {
+        UUID uuid = uuidOf(takerKey);
+        if (wanted <= 0 || uuid == null) {
             return 0;
+        }
+        ServerPlayer player = server.getPlayerList().getPlayer(uuid);
+        if (player == null) {
+            int taken = OfflineInventories.take(server, uuid, key, wanted);
+            if (taken > 0) {
+                recordTaken(uuid, key, taken);
+                fromPlayers += taken;
+                fromOffline += taken;
+            }
+            return taken;
         }
         Inventory inventory = player.getInventory();
         int taken = 0;
@@ -237,12 +250,13 @@ final class Reclaimer {
         return fromPlayers + fromGround + fromCredit;
     }
 
-    /** Lines like {@code 2 x mekanism:metallurgic_infuser from nopox_ (offline)}. */
-    List<String> missingSummary() {
+    /** Lines like {@code 2 x mekanism:metallurgic_infuser from nopox_ (offline)}, in the given language. */
+    List<String> missingSummary(String language) {
         List<String> lines = new ArrayList<>();
         missing.forEach((key, count) -> {
             String[] parts = key.split("\\|", -1);
-            lines.add("%d x %s from %s (%s)".formatted(count, Ids.shortId(parts[0]), parts[1], parts[2]));
+            lines.add(Lang.tr(language, "reclaim.missing_line", count, Ids.shortId(parts[0]), parts[1],
+                    Lang.tr(language, parts[2])));
         });
         return lines;
     }
@@ -265,11 +279,12 @@ final class Reclaimer {
                 : server.getProfileCache().get(uuid).map(GameProfile::getName).orElse(actorKey);
     }
 
+    /** Translation key of why items couldn't be found. */
     private String reasonFor(String actorKey) {
         if (uuidOf(actorKey) == null) {
-            return "not a player";
+            return "reclaim.reason.not_player";
         }
-        return onlinePlayer(actorKey) == null ? "offline" : "used up or given away";
+        return onlinePlayer(actorKey) == null ? "reclaim.reason.offline" : "reclaim.reason.used_up";
     }
 
     private static @Nullable UUID uuidOf(String actorKey) {

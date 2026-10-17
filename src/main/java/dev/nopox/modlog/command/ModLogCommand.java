@@ -16,6 +16,8 @@ import dev.nopox.modlog.inspect.Inspector;
 import dev.nopox.modlog.lookup.LookupPresenter;
 import dev.nopox.modlog.rollback.RollbackManager;
 import dev.nopox.modlog.rollback.RollbackPreview;
+import dev.nopox.modlog.util.Lang;
+import dev.nopox.modlog.util.ModLogException;
 import dev.nopox.modlog.util.TimeFormat;
 import net.minecraft.ChatFormatting;
 import net.minecraft.commands.CommandSourceStack;
@@ -101,6 +103,11 @@ public final class ModLogCommand {
                         .executes(ctx -> rollback(ctx, StringArgumentType.getString(ctx, "params"), rollback)));
     }
 
+    /** Sends a parameter error, translated if it has a key. */
+    private static void fail(CommandSourceStack source, IllegalArgumentException e) {
+        source.sendFailure(e instanceof ModLogException m ? Lang.text(source, m.key(), m.args()) : Component.literal(e.getMessage()));
+    }
+
     /** {@code /ml} itself is available to anyone with at least one ModLog permission. */
     private static boolean canUseAny(CommandSourceStack s) {
         return Permissions.check(s, Permissions.LOOKUP) || Permissions.check(s, Permissions.ROLLBACK)
@@ -110,21 +117,21 @@ public final class ModLogCommand {
     private static int help(CommandContext<CommandSourceStack> ctx) {
         CommandSourceStack s = ctx.getSource();
         s.sendSystemMessage(Component.literal("----- ModLog -----").withStyle(ChatFormatting.DARK_AQUA));
-        s.sendSystemMessage(Component.literal("/ml gui [u:<users>] [b:<blocks>] - browse logs in a GUI"));
-        s.sendSystemMessage(Component.literal("/ml i - toggle inspector"));
-        s.sendSystemMessage(Component.literal("/ml l " + LookupParams.USAGE + " - search"));
-        s.sendSystemMessage(Component.literal("/ml page <n> - page of the last search"));
-        s.sendSystemMessage(Component.literal("/ml rollback|restore <params> [#preview] - undo/redo matching actions (t: required)"));
-        s.sendSystemMessage(Component.literal("/ml undo - revert your last rollback/restore"));
-        s.sendSystemMessage(Component.literal("/ml purge t:<age> [vacuum] - delete actions older than <age>"));
-        s.sendSystemMessage(Component.literal("/ml status - database status"));
+        s.sendSystemMessage(Lang.text(s, "help.gui"));
+        s.sendSystemMessage(Lang.text(s, "help.inspect"));
+        s.sendSystemMessage(Lang.text(s, "help.lookup", LookupParams.USAGE));
+        s.sendSystemMessage(Lang.text(s, "help.page"));
+        s.sendSystemMessage(Lang.text(s, "help.rollback"));
+        s.sendSystemMessage(Lang.text(s, "help.undo"));
+        s.sendSystemMessage(Lang.text(s, "help.purge"));
+        s.sendSystemMessage(Lang.text(s, "help.status"));
         return 1;
     }
 
     private static int inspect(CommandContext<CommandSourceStack> ctx) throws CommandSyntaxException {
         ServerPlayer player = ctx.getSource().getPlayerOrException();
         boolean on = Inspector.toggle(player);
-        ctx.getSource().sendSystemMessage(Component.literal("ModLog inspector " + (on ? "enabled" : "disabled"))
+        ctx.getSource().sendSystemMessage(Lang.text(ctx.getSource(), on ? "inspector.enabled" : "inspector.disabled")
                 .withStyle(ChatFormatting.DARK_AQUA));
         return 1;
     }
@@ -134,7 +141,7 @@ public final class ModLogCommand {
         try {
             query = LookupParams.parse(params, ctx.getSource());
         } catch (IllegalArgumentException e) {
-            ctx.getSource().sendFailure(Component.literal(e.getMessage()));
+            fail(ctx.getSource(), e);
             return 0;
         }
         LookupPresenter.show(ctx.getSource(), query, false, 1);
@@ -146,24 +153,24 @@ public final class ModLogCommand {
         boolean preview = (" " + params + " ").toLowerCase(java.util.Locale.ROOT).contains(" #preview ");
         params = params.replaceAll("(?i)(^|\\s)#preview(?=\\s|$)", " ").trim();
         if (preview && !(ctx.getSource().getEntity() instanceof ServerPlayer)) {
-            ctx.getSource().sendFailure(Component.literal("#preview needs a player to show it to"));
+            ctx.getSource().sendFailure(Lang.text(ctx.getSource(), "error.preview_needs_player"));
             return 0;
         }
         LookupQuery query;
         try {
             query = LookupParams.parse(params, ctx.getSource());
         } catch (IllegalArgumentException e) {
-            ctx.getSource().sendFailure(Component.literal(e.getMessage()));
+            fail(ctx.getSource(), e);
             return 0;
         }
         // Guard rails against rolling back the whole server by accident
         if (query.sinceTime() == null) {
-            ctx.getSource().sendFailure(Component.literal("A time limit is required, e.g. t:1h"));
+            ctx.getSource().sendFailure(Lang.text(ctx.getSource(), "error.time_required"));
             return 0;
         }
         boolean radiusGiven = params.toLowerCase(java.util.Locale.ROOT).matches("(^|.*\\s)(r|radius):.*");
         if (query.actors().isEmpty() && !radiusGiven) {
-            ctx.getSource().sendFailure(Component.literal("Specify users (u:) or an area (r:10, r:#world, or r:#global to really mean everywhere)"));
+            ctx.getSource().sendFailure(Lang.text(ctx.getSource(), "error.scope_required"));
             return 0;
         }
         if (preview) {
@@ -180,7 +187,7 @@ public final class ModLogCommand {
         try {
             prefill = LookupParams.parse(params, ctx.getSource());
         } catch (IllegalArgumentException e) {
-            ctx.getSource().sendFailure(Component.literal(e.getMessage()));
+            fail(ctx.getSource(), e);
             return 0;
         }
         // Time, area and action type are picked with the GUI's own buttons
@@ -201,23 +208,23 @@ public final class ModLogCommand {
                     case "vacuum" -> vacuum = true;
                     default -> {
                         if (!token.startsWith("t:")) {
-                            throw new IllegalArgumentException("Unknown parameter '" + token + "'. Usage: /ml purge t:<age> [vacuum] [confirm]");
+                            throw new ModLogException("error.unknown_parameter", token, "/ml purge t:<age> [vacuum] [confirm]");
                         }
                         age = TimeFormat.parseDuration(token.substring(2));
                     }
                 }
             } catch (IllegalArgumentException e) {
-                source.sendFailure(Component.literal(e.getMessage()));
+                fail(source, e);
                 return 0;
             }
         }
         if (age == null || age < MIN_PURGE_AGE_MS) {
-            source.sendFailure(Component.literal("Give an age of at least 1h, e.g. /ml purge t:30d"));
+            source.sendFailure(Lang.text(source, "error.purge_age"));
             return 0;
         }
         Storage storage = ModLog.storage();
         if (storage == null) {
-            source.sendFailure(Component.literal("Database is not available, see server log"));
+            source.sendFailure(Lang.text(source, "error.database_unavailable"));
             return 0;
         }
         long cutoff = System.currentTimeMillis() - age;
@@ -227,28 +234,27 @@ public final class ModLogCommand {
             String command = "/ml purge t:%s%s confirm".formatted(ageText, vacuum ? " vacuum" : "");
             storage.countOlderThan(cutoff).whenComplete((count, error) -> server.execute(() -> {
                 if (error != null) {
-                    source.sendFailure(Component.literal("Count failed: " + error.getMessage()));
+                    source.sendFailure(Lang.text(source, "error.purge_count_failed", error.getMessage()));
                 } else if (count == 0) {
-                    source.sendSystemMessage(Component.literal("No actions older than " + ageText + "."));
+                    source.sendSystemMessage(Lang.text(source, "purge.nothing", ageText));
                 } else {
-                    source.sendSystemMessage(Component.literal("%d actions older than %s would be deleted permanently. To do it, run "
-                            .formatted(count, ageText)).withStyle(ChatFormatting.GOLD)
+                    source.sendSystemMessage(Lang.text(source, "purge.would_delete", count, ageText).withStyle(ChatFormatting.GOLD)
                             .append(Component.literal(command).withStyle(Style.EMPTY.withColor(ChatFormatting.RED)
                                     .withClickEvent(new ClickEvent(ClickEvent.Action.SUGGEST_COMMAND, command)))));
                 }
             }));
             return 1;
         }
-        source.sendSystemMessage(Component.literal("Purging actions older than " + ageText
-                + (vacuum ? " and compacting the database (writes pause meanwhile)..." : "...")).withStyle(ChatFormatting.DARK_AQUA));
+        source.sendSystemMessage(Lang.text(source, vacuum ? "purge.started_vacuum" : "purge.started", ageText)
+                .withStyle(ChatFormatting.DARK_AQUA));
         long started = System.currentTimeMillis();
         storage.purge(cutoff, vacuum).whenComplete((deleted, error) -> server.execute(() -> {
             if (error != null) {
                 ModLog.LOGGER.error("Purge failed", error);
-                source.sendFailure(Component.literal("Purge failed: " + error.getMessage()));
+                source.sendFailure(Lang.text(source, "error.purge_failed", error.getMessage()));
             } else {
-                source.sendSystemMessage(Component.literal("Purged %d actions in %.1fs.".formatted(deleted,
-                        (System.currentTimeMillis() - started) / 1000.0)).withStyle(ChatFormatting.DARK_AQUA));
+                source.sendSystemMessage(Lang.text(source, "purge.done", deleted,
+                        (System.currentTimeMillis() - started) / 1000.0).withStyle(ChatFormatting.DARK_AQUA));
                 ModLog.LOGGER.info("{} purged {} actions older than {}", source.getTextName(), deleted, ageText);
             }
         }));
@@ -258,7 +264,7 @@ public final class ModLogCommand {
     private static int page(CommandContext<CommandSourceStack> ctx) {
         int page = IntegerArgumentType.getInteger(ctx, "page");
         if (!LookupPresenter.showPage(ctx.getSource(), page)) {
-            ctx.getSource().sendFailure(Component.literal("No previous lookup. Use /ml l or /ml i first."));
+            ctx.getSource().sendFailure(Lang.text(ctx.getSource(), "error.no_previous_lookup"));
             return 0;
         }
         return 1;
@@ -267,11 +273,10 @@ public final class ModLogCommand {
     private static int status(CommandContext<CommandSourceStack> ctx) {
         Storage storage = ModLog.storage();
         if (storage == null) {
-            ctx.getSource().sendFailure(Component.literal("Database is not available, see server log"));
+            ctx.getSource().sendFailure(Lang.text(ctx.getSource(), "error.database_unavailable"));
             return 0;
         }
-        ctx.getSource().sendSystemMessage(Component.literal("ModLog: database OK, %d actions waiting to be written"
-                .formatted(storage.pendingWrites())));
+        ctx.getSource().sendSystemMessage(Lang.text(ctx.getSource(), "status.ok", storage.pendingWrites()));
         return 1;
     }
 }

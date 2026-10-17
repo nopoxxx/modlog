@@ -5,6 +5,8 @@ import net.neoforged.neoforge.common.ModConfigSpec;
 public final class ModLogConfig {
     public static final ModConfigSpec SPEC;
 
+    public static final ModConfigSpec.ConfigValue<String> LANGUAGE;
+
     public static final ModConfigSpec.ConfigValue<String> SQLITE_FILE;
     public static final ModConfigSpec.IntValue FLUSH_INTERVAL_MS;
     public static final ModConfigSpec.IntValue PAGE_SIZE;
@@ -19,9 +21,20 @@ public final class ModLogConfig {
     public static final ModConfigSpec.BooleanValue LOG_CONTAINERS;
     public static final ModConfigSpec.BooleanValue LOG_ITEM_DROPS;
     public static final ModConfigSpec.BooleanValue LOG_ITEM_PICKUPS;
+    public static final ModConfigSpec.BooleanValue LOG_ENTITY_KILLS;
+    public static final ModConfigSpec.BooleanValue LOG_FLUIDS;
+    public static final ModConfigSpec.BooleanValue LOG_SIGNS;
+    public static final ModConfigSpec.BooleanValue LOG_CHAT;
+    public static final ModConfigSpec.BooleanValue LOG_COMMANDS;
 
     static {
         ModConfigSpec.Builder b = new ModConfigSpec.Builder();
+
+        b.push("general");
+        LANGUAGE = b.comment("Language for the console and players whose client language ModLog doesn't have (en_us, ru_ru);",
+                        "players otherwise get their client's language")
+                .define("language", "en_us");
+        b.pop();
 
         b.push("database");
         SQLITE_FILE = b.comment("SQLite database file, relative to the server directory")
@@ -57,6 +70,17 @@ public final class ModLogConfig {
                 .define("itemDrops", true);
         LOG_ITEM_PICKUPS = b.comment("Items players pick up from the ground")
                 .define("itemPickups", true);
+        LOG_ENTITY_KILLS = b.comment("Entities killed by players, and named, tamed, villager and armor stand deaths by anything;",
+                        "item frames, paintings and vehicles players destroy")
+                .define("entityKills", true);
+        LOG_FLUIDS = b.comment("Fluids placed and picked up with buckets")
+                .define("fluids", true);
+        LOG_SIGNS = b.comment("Sign text edits")
+                .define("signs", true);
+        LOG_CHAT = b.comment("Chat messages (lookups only)")
+                .define("chat", true);
+        LOG_COMMANDS = b.comment("Commands players run (lookups only)")
+                .define("commands", true);
         b.pop();
 
         SPEC = b.build();

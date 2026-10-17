@@ -1,5 +1,6 @@
 package dev.nopox.modlog.gui;
 
+import dev.nopox.modlog.util.Lang;
 import net.minecraft.ChatFormatting;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.network.chat.Component;
@@ -72,9 +73,9 @@ public final class AnvilInput {
         @Override
         public void createResult() {
             ItemStack result = new ItemStack(Items.LIME_DYE);
-            result.set(DataComponents.CUSTOM_NAME, Component.literal(text.isBlank() ? "(empty)" : text)
+            result.set(DataComponents.CUSTOM_NAME, Component.literal(text.isBlank() ? Lang.tr(player, "gui.anvil.empty") : text)
                     .withStyle(s -> s.withItalic(false)));
-            result.set(DataComponents.LORE, new ItemLore(List.of(Component.literal("Click to apply")
+            result.set(DataComponents.LORE, new ItemLore(List.of(Lang.text(player, "gui.anvil.apply")
                     .withStyle(s -> s.withItalic(false).withColor(ChatFormatting.GREEN)))));
             resultSlots.setItem(0, result);
         }

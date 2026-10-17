@@ -21,7 +21,13 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Block;
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.LiquidBlock;
+import net.minecraft.world.level.block.entity.SignBlockEntity;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.neoforged.neoforge.items.IItemHandler;
@@ -67,14 +73,17 @@ final class ActionApplier {
     static Result apply(MinecraftServer server, StoredAction a, boolean rollback, @Nullable Reclaimer reclaimer) {
         ServerLevel level = server.getLevel(ResourceKey.create(Registries.DIMENSION, ResourceLocation.parse(a.world())));
         if (level == null) {
-            return Result.skipped("world not loaded");
+            return Result.skipped("skip.world_not_loaded");
         }
         BlockPos pos = new BlockPos(a.x(), a.y(), a.z());
         Result result = switch (a.type()) {
             case BLOCK_BREAK -> rollback ? placeBlock(level, pos, a) : removeBlock(level, pos, a);
             case BLOCK_PLACE -> rollback ? removeBlock(level, pos, a) : placeBlock(level, pos, a);
             case CONTAINER_ADD, ITEM_PICKUP -> rollback ? extractItems(level, pos, a) : insertItems(level, pos, a);
-            case ITEM_DROP -> Result.skipped("item drops can't be undone");
+            case ITEM_DROP -> Result.skipped("skip.drop");
+            case CHAT, COMMAND -> Result.skipped("skip.chat");
+            case ENTITY_KILL -> rollback ? respawnEntity(level, a) : removeEntity(level, a);
+            case SIGN_EDIT -> setSignText(level, pos, a, rollback ? "before" : "after");
             case CONTAINER_REMOVE -> rollback ? insertItems(level, pos, a) : extractItems(level, pos, a);
         };
         return reclaimer != null && rollback ? reclaim(reclaimer, level, pos, a, result) : result;
@@ -107,8 +116,8 @@ final class ActionApplier {
                     }
                 }
             }
-            // The block is back: take what fell out of it when it broke
-            case BLOCK_BREAK -> {
+            // The block or entity is back: take what fell out of it
+            case BLOCK_BREAK, ENTITY_KILL -> {
                 if (result.blocks() > 0) {
                     for (Drops.Drop drop : Drops.decode(a.drops(), level.registryAccess()).drops()) {
                         reclaimer.reclaim(drop.stack(), drop.stack().getCount(), a.actorKey(), level, pos, drop.entity(),
@@ -120,6 +129,62 @@ final class ActionApplier {
             }
         }
         return result;
+    }
+
+    /** Fluids need neighbour updates, or flowing fluid around a removed source never drains. */
+    private static int flagsFor(BlockState state) {
+        return state.getBlock() instanceof LiquidBlock ? Block.UPDATE_ALL : FLAGS;
+    }
+
+    /** Brings a killed entity back from its logged data, alive and well. */
+    private static Result respawnEntity(ServerLevel level, StoredAction a) {
+        if (a.nbt() == null) {
+            return Result.skipped("skip.no_entity_data");
+        }
+        CompoundTag data = NbtBytes.decompress(a.nbt());
+        if (data.hasUUID("UUID") && level.getEntity(data.getUUID("UUID")) != null) {
+            return new Result(Outcome.DONE, 0, 0, null);
+        }
+        data.putShort("Fire", (short) -1);
+        data.remove("DeathTime");
+        data.remove("HurtTime");
+        Entity entity = EntityType.loadEntityRecursive(data, level, e -> e);
+        if (entity == null) {
+            return Result.skipped("skip.unknown_entity");
+        }
+        if (entity instanceof LivingEntity living) {
+            living.setHealth(living.getMaxHealth());
+            living.deathTime = 0;
+        }
+        return level.tryAddFreshEntityWithPassengers(entity)
+                ? new Result(Outcome.DONE, 1, 0, null)
+                : Result.skipped("skip.cant_spawn");
+    }
+
+    /** Restore of a kill: removes the entity that a rollback brought back. */
+    private static Result removeEntity(ServerLevel level, StoredAction a) {
+        if (a.nbt() == null) {
+            return Result.skipped("skip.no_entity_data");
+        }
+        CompoundTag data = NbtBytes.decompress(a.nbt());
+        Entity entity = data.hasUUID("UUID") ? level.getEntity(data.getUUID("UUID")) : null;
+        if (entity == null) {
+            return new Result(Outcome.DONE, 0, 0, null);
+        }
+        entity.discard();
+        return new Result(Outcome.DONE, 1, 0, null);
+    }
+
+    /** Puts the sign text from before or after the edit back. */
+    private static Result setSignText(ServerLevel level, BlockPos pos, StoredAction a, String which) {
+        if (a.nbt() == null || !(level.getBlockEntity(pos) instanceof SignBlockEntity sign)) {
+            return Result.skipped("skip.sign_gone");
+        }
+        CompoundTag text = NbtBytes.decompress(a.nbt()).getCompound(which);
+        sign.loadWithComponents(text, level.registryAccess());
+        sign.setChanged();
+        level.sendBlockUpdated(pos, sign.getBlockState(), sign.getBlockState(), Block.UPDATE_CLIENTS);
+        return new Result(Outcome.DONE, 1, 0, null);
     }
 
     /**
@@ -180,17 +245,17 @@ final class ActionApplier {
     private static Result placeBlock(ServerLevel level, BlockPos pos, StoredAction a) {
         BlockState state = stateOf(a);
         if (state == null) {
-            return Result.skipped("unknown block " + a.material());
+            return Result.skipped("skip.unknown_block");
         }
         BlockState current = level.getBlockState(pos);
         if (current == state) {
             return new Result(Outcome.DONE, 0, 0, null);
         }
         if (!current.canBeReplaced()) {
-            return Result.skipped("occupied");
+            return Result.skipped("skip.occupied");
         }
         level.removeBlockEntity(pos);
-        level.setBlock(pos, state, FLAGS);
+        level.setBlock(pos, state, flagsFor(state));
 
         if (a.nbt() != null) {
             BlockEntity be = level.getBlockEntity(pos);
@@ -213,11 +278,11 @@ final class ActionApplier {
             return new Result(Outcome.DONE, 0, 0, null);
         }
         if (!BuiltInRegistries.BLOCK.getKey(current.getBlock()).toString().equals(a.material())) {
-            return Result.skipped("changed since");
+            return Result.skipped("skip.changed");
         }
         // Remove the block entity first so the block doesn't spill its contents on removal
         level.removeBlockEntity(pos);
-        level.setBlock(pos, Blocks.AIR.defaultBlockState(), FLAGS);
+        level.setBlock(pos, Blocks.AIR.defaultBlockState(), flagsFor(current));
         return new Result(Outcome.DONE, 1, 0, null);
     }
 
@@ -228,15 +293,15 @@ final class ActionApplier {
         IItemHandler handler = handlerFor(level, pos, a);
         ItemStack template = itemOf(level, a);
         if (handler == null && ItemStorages.isMarker(a.data())) {
-            return Result.skipped("storage not reachable (owner offline?)");
+            return Result.skipped("skip.storage_unreachable");
         }
         if (handler == null) {
             // Logged by an older version without the network marker, or the block has no inventory of its own
             return NetworkStorages.find(level, pos) != null ? viaNetwork(level, pos, a, true)
-                    : Result.skipped("no inventory");
+                    : Result.skipped("skip.no_inventory");
         }
         if (template.isEmpty()) {
-            return Result.skipped("unknown item " + a.material());
+            return Result.skipped("skip.unknown_item");
         }
         int remaining = a.amount();
         while (remaining > 0) {
@@ -247,7 +312,7 @@ final class ActionApplier {
                 break;
             }
         }
-        return insertResult(a.amount(), a.amount() - remaining, "inventory full");
+        return insertResult(a.amount(), a.amount() - remaining, "skip.inventory_full");
     }
 
     private static Result extractItems(ServerLevel level, BlockPos pos, StoredAction a) {
@@ -257,15 +322,15 @@ final class ActionApplier {
         IItemHandler handler = handlerFor(level, pos, a);
         ItemStack template = itemOf(level, a);
         if (handler == null && ItemStorages.isMarker(a.data())) {
-            return Result.skipped("storage not reachable (owner offline?)");
+            return Result.skipped("skip.storage_unreachable");
         }
         if (handler == null) {
             // Logged by an older version without the network marker, or the block has no inventory of its own
             return NetworkStorages.find(level, pos) != null ? viaNetwork(level, pos, a, false)
-                    : Result.skipped("no inventory");
+                    : Result.skipped("skip.no_inventory");
         }
         if (template.isEmpty()) {
-            return Result.skipped("unknown item " + a.material());
+            return Result.skipped("skip.unknown_item");
         }
         int remaining = a.amount();
         for (int slot = 0; slot < handler.getSlots() && remaining > 0; slot++) {
@@ -273,7 +338,7 @@ final class ActionApplier {
                 remaining -= handler.extractItem(slot, remaining, false).getCount();
             }
         }
-        return itemResult(a.amount(), a.amount() - remaining, "items gone");
+        return itemResult(a.amount(), a.amount() - remaining, "skip.items_gone");
     }
 
     /** The inventory a container action happened in: an item storage (backpack) if marked so, else the block's. */
@@ -288,14 +353,14 @@ final class ActionApplier {
         NetworkStorage network = NetworkStorages.find(level, pos);
         ItemStack template = itemOf(level, a);
         if (network == null) {
-            return Result.skipped("no storage network");
+            return Result.skipped("skip.no_network");
         }
         if (template.isEmpty()) {
-            return Result.skipped("unknown item " + a.material());
+            return Result.skipped("skip.unknown_item");
         }
         long moved = insert ? network.insert(template, a.amount()) : network.extract(template, a.amount());
-        return insert ? insertResult(a.amount(), (int) moved, "network full or offline")
-                : itemResult(a.amount(), (int) moved, "items gone from network");
+        return insert ? insertResult(a.amount(), (int) moved, "skip.network_full")
+                : itemResult(a.amount(), (int) moved, "skip.items_gone_network");
     }
 
     private static Result insertResult(int wanted, int moved, String reason) {
