@@ -33,8 +33,11 @@ import org.jetbrains.annotations.Nullable;
  * removed if it's still the logged block.
  */
 final class ActionApplier {
-    /** Update clients, but no neighbour updates or shape changes: the world is put back exactly as logged. */
-    private static final int FLAGS = Block.UPDATE_CLIENTS | Block.UPDATE_KNOWN_SHAPE;
+    /**
+     * Update clients and let neighbours adjust their shape (the other half of a double chest re-pairs, fences
+     * reconnect), but no neighbour block updates, so restoring doesn't trigger redstone or physics.
+     */
+    private static final int FLAGS = Block.UPDATE_CLIENTS;
 
     enum Outcome {
         /** Changed the world, or it was already in the target state. */
@@ -63,6 +66,7 @@ final class ActionApplier {
             case BLOCK_BREAK -> rollback ? placeBlock(level, pos, a) : removeBlock(level, pos, a);
             case BLOCK_PLACE -> rollback ? removeBlock(level, pos, a) : placeBlock(level, pos, a);
             case CONTAINER_ADD, ITEM_PICKUP -> rollback ? extractItems(level, pos, a) : insertItems(level, pos, a);
+            case ITEM_DROP -> Result.skipped("item drops can't be undone");
             case CONTAINER_REMOVE -> rollback ? insertItems(level, pos, a) : extractItems(level, pos, a);
         };
     }
@@ -121,7 +125,7 @@ final class ActionApplier {
         IItemHandler handler = handlerFor(level, pos, a);
         ItemStack template = itemOf(level, a);
         if (handler == null && ItemStorages.isMarker(a.data())) {
-            return Result.skipped("storage item not found (not with an online player)");
+            return Result.skipped("storage not reachable (owner offline?)");
         }
         if (handler == null) {
             // Logged by an older version without the network marker, or the block has no inventory of its own
@@ -150,7 +154,7 @@ final class ActionApplier {
         IItemHandler handler = handlerFor(level, pos, a);
         ItemStack template = itemOf(level, a);
         if (handler == null && ItemStorages.isMarker(a.data())) {
-            return Result.skipped("storage item not found (not with an online player)");
+            return Result.skipped("storage not reachable (owner offline?)");
         }
         if (handler == null) {
             // Logged by an older version without the network marker, or the block has no inventory of its own

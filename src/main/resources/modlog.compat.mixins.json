@@ -5,6 +5,7 @@
   "plugin": "dev.nopox.modlog.mixin.compat.CompatMixinPlugin",
   "compatibilityLevel": "JAVA_21",
   "mixins": [
+    "create.BlockBreakingKineticBlockEntityMixin",
     "sophisticated.MagnetUpgradeWrapperMixin",
     "sophisticated.PickupResponseUpgradeMixin",
     "sophisticated.UpgradeWrapperBaseAccessor"

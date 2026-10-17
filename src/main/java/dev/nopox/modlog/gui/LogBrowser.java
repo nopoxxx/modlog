@@ -76,7 +76,8 @@ public final class LogBrowser {
     private enum ActionFilter {
         ALL(Items.COMPASS, "All actions", EnumSet.noneOf(ActionType.class)),
         BLOCKS(Items.GRASS_BLOCK, "Blocks", EnumSet.of(ActionType.BLOCK_BREAK, ActionType.BLOCK_PLACE)),
-        CONTAINERS(Items.CHEST, "Containers", EnumSet.of(ActionType.CONTAINER_ADD, ActionType.CONTAINER_REMOVE, ActionType.ITEM_PICKUP));
+        CONTAINERS(Items.CHEST, "Containers", EnumSet.of(ActionType.CONTAINER_ADD, ActionType.CONTAINER_REMOVE, ActionType.ITEM_PICKUP)),
+        ITEMS(Items.HOPPER, "Item drops/pickups", EnumSet.of(ActionType.ITEM_DROP, ActionType.ITEM_PICKUP));
 
         final Item icon;
         final String label;

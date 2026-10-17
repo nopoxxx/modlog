@@ -9,6 +9,8 @@ import dev.nopox.modlog.container.ContainerTracker;
 import dev.nopox.modlog.db.Storage;
 import dev.nopox.modlog.inspect.Inspector;
 import dev.nopox.modlog.listener.BlockListener;
+import dev.nopox.modlog.listener.ItemListener;
+import dev.nopox.modlog.listener.TntTracker;
 import dev.nopox.modlog.rollback.RollbackManager;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.fml.ModContainer;
@@ -38,6 +40,8 @@ public final class ModLog {
         NeoForge.EVENT_BUS.addListener(ModLog::onServerStopped);
         NeoForge.EVENT_BUS.addListener((RegisterCommandsEvent e) -> ModLogCommand.register(e.getDispatcher()));
         BlockListener.register(NeoForge.EVENT_BUS);
+        ItemListener.register(NeoForge.EVENT_BUS);
+        TntTracker.register(NeoForge.EVENT_BUS);
         ContainerTracker.register(NeoForge.EVENT_BUS);
         RollbackManager.register(NeoForge.EVENT_BUS);
         NetworkStorages.init();

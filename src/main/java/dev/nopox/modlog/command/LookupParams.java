@@ -18,7 +18,7 @@ import java.util.Set;
  *   u:Steve,Alex      actors (players, or #creeper, #tnt, ...)
  *   t:2h30m           time window
  *   r:10              radius around the executor; r:#global (default) or r:#world for the whole dimension
- *   a:-block          actions: block, +block, -block, container, +container, -container, pickup
+ *   a:-block          actions: block, +block, -block, container, +container, -container, item, pickup, drop
  *   b:stone,ae2:sky_stone_block   blocks / items (minecraft: is implied)
  * </pre>
  */
@@ -102,9 +102,11 @@ public final class LookupParams {
             case "container" -> EnumSet.of(ActionType.CONTAINER_ADD, ActionType.CONTAINER_REMOVE);
             case "+container" -> EnumSet.of(ActionType.CONTAINER_ADD);
             case "-container" -> EnumSet.of(ActionType.CONTAINER_REMOVE);
-            case "pickup" -> EnumSet.of(ActionType.ITEM_PICKUP);
+            case "pickup", "+item" -> EnumSet.of(ActionType.ITEM_PICKUP);
+            case "drop", "-item" -> EnumSet.of(ActionType.ITEM_DROP);
+            case "item" -> EnumSet.of(ActionType.ITEM_PICKUP, ActionType.ITEM_DROP);
             default -> throw new IllegalArgumentException(
-                    "Unknown action '" + action + "'. Use block, +block, -block, container, +container, -container, pickup");
+                    "Unknown action '" + action + "'. Use block, +block, -block, container, +container, -container, item, pickup, drop");
         };
     }
 

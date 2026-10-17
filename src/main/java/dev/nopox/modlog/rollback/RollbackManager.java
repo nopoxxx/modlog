@@ -2,6 +2,7 @@ package dev.nopox.modlog.rollback;
 
 import dev.nopox.modlog.ModLog;
 import dev.nopox.modlog.ModLogConfig;
+import dev.nopox.modlog.action.ActionType;
 import dev.nopox.modlog.db.LookupQuery;
 import dev.nopox.modlog.db.Storage;
 import dev.nopox.modlog.db.StoredAction;
@@ -19,6 +20,7 @@ import net.neoforged.neoforge.event.tick.ServerTickEvent;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.ArrayList;
+import java.util.EnumSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -101,6 +103,11 @@ public final class RollbackManager {
         if (running != null || starting) {
             source.sendFailure(Component.literal("Another rollback/restore is in progress, try again when it finishes"));
             return;
+        }
+        if (query.actions().isEmpty()) {
+            // Drops can't be undone; leave them out unless asked for explicitly
+            query = new LookupQuery(query.actors(), EnumSet.complementOf(EnumSet.of(ActionType.ITEM_DROP)), query.materials(),
+                    query.world(), query.center(), query.radius(), query.sinceTime(), query.ids(), query.hideRolledBack());
         }
         starting = true;
         int max = ModLogConfig.ROLLBACK_MAX_ACTIONS.get();

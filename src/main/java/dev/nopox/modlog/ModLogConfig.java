@@ -16,6 +16,8 @@ public final class ModLogConfig {
     public static final ModConfigSpec.BooleanValue LOG_BLOCK_PLACE;
     public static final ModConfigSpec.BooleanValue LOG_EXPLOSIONS;
     public static final ModConfigSpec.BooleanValue LOG_CONTAINERS;
+    public static final ModConfigSpec.BooleanValue LOG_ITEM_DROPS;
+    public static final ModConfigSpec.BooleanValue LOG_ITEM_PICKUPS;
 
     static {
         ModConfigSpec.Builder b = new ModConfigSpec.Builder();
@@ -46,6 +48,10 @@ public final class ModLogConfig {
                 .define("explosions", true);
         LOG_CONTAINERS = b.comment("Items players put into or take out of block inventories (any mod, incl. AE2/RS terminals)")
                 .define("containers", true);
+        LOG_ITEM_DROPS = b.comment("Items players drop on the ground")
+                .define("itemDrops", true);
+        LOG_ITEM_PICKUPS = b.comment("Items players pick up from the ground")
+                .define("itemPickups", true);
         b.pop();
 
         SPEC = b.build();

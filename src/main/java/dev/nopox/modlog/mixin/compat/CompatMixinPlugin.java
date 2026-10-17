@@ -15,7 +15,8 @@ import java.util.Set;
  */
 public final class CompatMixinPlugin implements IMixinConfigPlugin {
     private static final Map<String, String> MOD_BY_PACKAGE = Map.of(
-            "sophisticated", "sophisticatedcore"
+            "sophisticated", "sophisticatedcore",
+            "create", "create"
     );
 
     @Override

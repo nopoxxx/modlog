@@ -1,5 +1,6 @@
 package dev.nopox.modlog.action;
 
+import dev.nopox.modlog.listener.TntTracker;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.player.Player;
@@ -34,13 +35,21 @@ public record Actor(String key, String name) {
         return nonPlayer(EntityType.getKey(entity.getType()).getPath());
     }
 
-    /** Prefers whoever is ultimately responsible, e.g. the player who lit the TNT. */
+    /**
+     * Prefers whoever is ultimately responsible: the player who lit the TNT, else the player who placed TNT that
+     * redstone or fire lit.
+     */
     public static Actor of(Explosion explosion) {
         Entity source = explosion.getIndirectSourceEntity();
-        if (source == null) {
-            source = explosion.getDirectSourceEntity();
+        if (source != null) {
+            return of(source);
         }
-        return source == null ? nonPlayer("explosion") : of(source);
+        Entity direct = explosion.getDirectSourceEntity();
+        if (direct == null) {
+            return nonPlayer("explosion");
+        }
+        Actor placer = TntTracker.placerOf(direct);
+        return placer != null ? placer : of(direct);
     }
 
     public static Actor nonPlayer(String name) {

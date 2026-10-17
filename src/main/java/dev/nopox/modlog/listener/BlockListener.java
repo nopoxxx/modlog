@@ -11,6 +11,7 @@ import net.minecraft.commands.arguments.blocks.BlockStateParser;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.level.block.TntBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.neoforged.bus.api.EventPriority;
 import net.neoforged.bus.api.IEventBus;
@@ -60,6 +61,16 @@ public final class BlockListener {
         bus.addListener(EventPriority.LOWEST, BlockListener::onPlace);
         bus.addListener(EventPriority.LOWEST, BlockListener::onExplosion);
         bus.addListener(BlockListener::onTickEnd);
+    }
+
+    /**
+     * A block is about to be broken by something that fires no break event (machines). Logged at the end of the tick
+     * if it really went.
+     */
+    public static void breaking(ServerLevel level, BlockPos pos, BlockState state, Actor actor) {
+        if (ModLogConfig.LOG_BLOCK_BREAK.get() && !state.isAir()) {
+            PENDING.add(Pending.breaking(level, pos, state, actor, System.currentTimeMillis()));
+        }
     }
 
     private static void onBreak(BlockEvent.BreakEvent event) {
@@ -126,6 +137,9 @@ public final class BlockListener {
                     // Log the current state: neighbours may have reshaped it (stairs, fences, redstone)
                     if (current.is(p.state.getBlock())) {
                         ModLog.log(toAction(p, current));
+                        if (current.getBlock() instanceof TntBlock && !p.actor.key().startsWith("#")) {
+                            TntTracker.placed(p.level, p.pos, p.actor);
+                        }
                     }
                 }
                 default -> throw new IllegalStateException("Unexpected pending type " + p.type);

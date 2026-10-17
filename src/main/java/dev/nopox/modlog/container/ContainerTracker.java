@@ -25,6 +25,7 @@ import net.minecraft.server.network.ServerGamePacketListenerImpl;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.inventory.AbstractContainerMenu;
 import net.minecraft.world.inventory.Slot;
+import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.neoforged.bus.api.EventPriority;
@@ -55,11 +56,11 @@ public final class ContainerTracker {
      * A GUI the player opened on a storage.
      *
      * @param pos    where transactions are logged: the block, a block of the linked network (wireless terminals), or
-     *               the player's position (backpacks)
+     *               the player's position (backpacks); null for a wireless terminal whose network isn't known yet
      * @param marker {@code data} column value telling rollback where the items went: {@link NetworkStorages#DATA_MARKER}
      *               for a storage network, an {@link ItemStorages} marker for an item storage, null for the block itself
      */
-    private record Session(AbstractContainerMenu menu, ServerLevel level, BlockPos pos, @Nullable String marker) {
+    private record Session(AbstractContainerMenu menu, ServerLevel level, @Nullable BlockPos pos, @Nullable String marker) {
     }
 
     /** Snapshot taken before a packet is handled. */
@@ -197,6 +198,16 @@ public final class ContainerTracker {
         after.forEach((k, n) -> delta.merge(k, -n, Integer::sum));
         c.tossed.forEach((k, n) -> delta.merge(k, -n, Integer::sum));
 
+        // An unstackable item that only changed its data (a wireless terminal's energy, a tool's durability) shows up
+        // as one removed and one added: that's not a transfer
+        Map<Item, Integer> unstackableNet = new HashMap<>();
+        delta.forEach((k, n) -> {
+            if (k.stack().getMaxStackSize() == 1) {
+                unstackableNet.merge(k.stack().getItem(), n, Integer::sum);
+            }
+        });
+        delta.keySet().removeIf(k -> k.stack().getMaxStackSize() == 1 && unstackableNet.get(k.stack().getItem()) == 0);
+
         long now = System.currentTimeMillis();
         String world = c.level.dimension().location().toString();
         Actor actor = Actor.of(c.player);
@@ -239,7 +250,25 @@ public final class ContainerTracker {
 
     private static @Nullable Session currentSession(ServerPlayer player) {
         Session session = SESSIONS.get(player.getUUID());
-        return session != null && session.menu == player.containerMenu ? session : null;
+        if (session == null || session.menu != player.containerMenu) {
+            return null;
+        }
+        if (session.pos == null) {
+            Session resolved = wirelessSession(player, session.menu);
+            if (resolved == null) {
+                return null;
+            }
+            SESSIONS.put(player.getUUID(), resolved);
+            return resolved;
+        }
+        return session;
+    }
+
+    /** A session at a block of the network a wireless terminal is linked to, if that's known yet. */
+    private static @Nullable Session wirelessSession(ServerPlayer player, AbstractContainerMenu menu) {
+        GlobalPos networkPos = NetworkStorages.locate(menu);
+        ServerLevel networkLevel = networkPos == null ? null : player.server.getLevel(networkPos.dimension());
+        return networkLevel == null ? null : new Session(menu, networkLevel, networkPos.pos(), NetworkStorages.DATA_MARKER);
     }
 
     // ---- Events ----
@@ -267,12 +296,11 @@ public final class ContainerTracker {
             return;
         }
         if (NetworkStorages.isTerminal(menu)) {
-            GlobalPos networkPos = NetworkStorages.locate(menu);
-            ServerLevel networkLevel = networkPos == null ? null : player.server.getLevel(networkPos.dimension());
-            if (networkLevel != null) {
-                SESSIONS.put(player.getUUID(), new Session(menu, networkLevel, networkPos.pos(), NetworkStorages.DATA_MARKER));
-                return;
-            }
+            // An AE2 wireless terminal only finds its access point on its first tick, after the menu opened:
+            // then the network is resolved on first use
+            Session session = wirelessSession(player, menu);
+            SESSIONS.put(player.getUUID(), session != null ? session : new Session(menu, level, null, NetworkStorages.DATA_MARKER));
+            return;
         }
         // Crafting table, portable cells, unlinked wireless terminals, ...: not tracked
         SESSIONS.remove(player.getUUID());

@@ -68,6 +68,7 @@ dependencies {
     compileOnly 'org.apiguardian:apiguardian-api:1.1.2' // annotations used by RS's API
     compileOnly "maven.modrinth:sophisticated-backpacks:${sophisticated_backpacks_modrinth_version}"
     compileOnly "maven.modrinth:sophisticated-core:${sophisticated_core_modrinth_version}"
+    compileOnly "maven.modrinth:create:${create_modrinth_version}"
 }
 
 var generateModMetadata = tasks.register("generateModMetadata", ProcessResources) {

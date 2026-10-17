@@ -12,7 +12,9 @@ public enum ActionType {
     CONTAINER_REMOVE(2, "removed"),
     CONTAINER_ADD(3, "added"),
     /** Picked up from the ground straight into a storage (backpack magnet/pickup upgrades). Undone like an add. */
-    ITEM_PICKUP(4, "picked up");
+    ITEM_PICKUP(4, "picked up"),
+    /** A player dropped items on the ground. Logged for lookups only, it can't be undone. */
+    ITEM_DROP(5, "dropped");
 
     private static final Map<Integer, ActionType> BY_ID = new HashMap<>();
 
