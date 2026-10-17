@@ -2,6 +2,7 @@ package dev.nopox.modlog.rollback;
 
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
 import dev.nopox.modlog.ModLog;
+import dev.nopox.modlog.compat.ItemStorages;
 import dev.nopox.modlog.compat.NetworkStorage;
 import dev.nopox.modlog.compat.NetworkStorages;
 import dev.nopox.modlog.container.ContainerContents;
@@ -61,7 +62,7 @@ final class ActionApplier {
         return switch (a.type()) {
             case BLOCK_BREAK -> rollback ? placeBlock(level, pos, a) : removeBlock(level, pos, a);
             case BLOCK_PLACE -> rollback ? removeBlock(level, pos, a) : placeBlock(level, pos, a);
-            case CONTAINER_ADD -> rollback ? extractItems(level, pos, a) : insertItems(level, pos, a);
+            case CONTAINER_ADD, ITEM_PICKUP -> rollback ? extractItems(level, pos, a) : insertItems(level, pos, a);
             case CONTAINER_REMOVE -> rollback ? insertItems(level, pos, a) : extractItems(level, pos, a);
         };
     }
@@ -117,8 +118,11 @@ final class ActionApplier {
         if (NetworkStorages.DATA_MARKER.equals(a.data())) {
             return viaNetwork(level, pos, a, true);
         }
-        IItemHandler handler = ContainerContents.itemHandler(level, pos);
+        IItemHandler handler = handlerFor(level, pos, a);
         ItemStack template = itemOf(level, a);
+        if (handler == null && ItemStorages.isMarker(a.data())) {
+            return Result.skipped("storage item not found (not with an online player)");
+        }
         if (handler == null) {
             // Logged by an older version without the network marker, or the block has no inventory of its own
             return NetworkStorages.find(level, pos) != null ? viaNetwork(level, pos, a, true)
@@ -143,8 +147,11 @@ final class ActionApplier {
         if (NetworkStorages.DATA_MARKER.equals(a.data())) {
             return viaNetwork(level, pos, a, false);
         }
-        IItemHandler handler = ContainerContents.itemHandler(level, pos);
+        IItemHandler handler = handlerFor(level, pos, a);
         ItemStack template = itemOf(level, a);
+        if (handler == null && ItemStorages.isMarker(a.data())) {
+            return Result.skipped("storage item not found (not with an online player)");
+        }
         if (handler == null) {
             // Logged by an older version without the network marker, or the block has no inventory of its own
             return NetworkStorages.find(level, pos) != null ? viaNetwork(level, pos, a, false)
@@ -160,6 +167,13 @@ final class ActionApplier {
             }
         }
         return itemResult(a.amount(), a.amount() - remaining, "items gone");
+    }
+
+    /** The inventory a container action happened in: an item storage (backpack) if marked so, else the block's. */
+    private static @Nullable IItemHandler handlerFor(ServerLevel level, BlockPos pos, StoredAction a) {
+        return ItemStorages.isMarker(a.data())
+                ? ItemStorages.find(level.getServer(), a.data())
+                : ContainerContents.itemHandler(level, pos);
     }
 
     /** For actions done through an AE2/RS terminal: move the items into/out of the network the terminal is on. */

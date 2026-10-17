@@ -2,6 +2,7 @@ package dev.nopox.modlog.gui;
 
 import dev.nopox.modlog.ModLog;
 import dev.nopox.modlog.action.ActionType;
+import dev.nopox.modlog.compat.ItemStorages;
 import dev.nopox.modlog.compat.NetworkStorages;
 import dev.nopox.modlog.db.LookupQuery;
 import dev.nopox.modlog.db.LookupRow;
@@ -75,7 +76,7 @@ public final class LogBrowser {
     private enum ActionFilter {
         ALL(Items.COMPASS, "All actions", EnumSet.noneOf(ActionType.class)),
         BLOCKS(Items.GRASS_BLOCK, "Blocks", EnumSet.of(ActionType.BLOCK_BREAK, ActionType.BLOCK_PLACE)),
-        CONTAINERS(Items.CHEST, "Containers", EnumSet.of(ActionType.CONTAINER_ADD, ActionType.CONTAINER_REMOVE));
+        CONTAINERS(Items.CHEST, "Containers", EnumSet.of(ActionType.CONTAINER_ADD, ActionType.CONTAINER_REMOVE, ActionType.ITEM_PICKUP));
 
         final Item icon;
         final String label;
@@ -495,6 +496,8 @@ public final class LogBrowser {
         }
         if (NetworkStorages.DATA_MARKER.equals(row.data())) {
             lore.add(line("Via storage network terminal", ChatFormatting.AQUA));
+        } else if (ItemStorages.isMarker(row.data())) {
+            lore.add(line("In " + ItemStorages.describe(row.data()), ChatFormatting.AQUA));
         }
         if (row.rolledBack()) {
             lore.add(line("Rolled back", ChatFormatting.RED));

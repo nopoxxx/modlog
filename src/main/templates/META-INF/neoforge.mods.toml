@@ -15,6 +15,10 @@ Block and storage logging with lookup and rollback, aware of modded inventories.
 [[mixins]]
 config="${mod_id}.mixins.json"
 
+# Integration mixins, each applied only when its mod is present (see CompatMixinPlugin)
+[[mixins]]
+config="${mod_id}.compat.mixins.json"
+
 [[dependencies.${mod_id}]]
     modId="neoforge"
     type="required"

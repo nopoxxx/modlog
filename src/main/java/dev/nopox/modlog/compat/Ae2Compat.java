@@ -8,7 +8,11 @@ import appeng.api.networking.IInWorldGridNodeHost;
 import appeng.api.networking.security.IActionSource;
 import appeng.api.stacks.AEItemKey;
 import appeng.api.storage.MEStorage;
+import appeng.api.implementations.menuobjects.ItemMenuHost;
+import appeng.helpers.WirelessTerminalMenuHost;
 import appeng.menu.me.common.MEStorageMenu;
+import net.minecraft.core.GlobalPos;
+import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.server.level.ServerLevel;
@@ -22,8 +26,26 @@ final class Ae2Compat {
     }
 
     static boolean isTerminal(AbstractContainerMenu menu) {
-        // Terminal, crafting terminal, pattern encoding terminal, ME chest
-        return menu instanceof MEStorageMenu;
+        // Terminals, ME chest and wireless terminals; not portable cells, whose storage is the cell in the item
+        return menu instanceof MEStorageMenu storage
+                && (!(storage.getHost() instanceof ItemMenuHost<?>) || storage.getHost() instanceof WirelessTerminalMenuHost<?>);
+    }
+
+    static @Nullable GlobalPos locate(AbstractContainerMenu menu) {
+        if (!(menu instanceof MEStorageMenu storage) || !(storage.getHost() instanceof WirelessTerminalMenuHost<?> host)) {
+            return null;
+        }
+        // The node of the access point the terminal is connected through
+        IGridNode node = host.getActionableNode();
+        if (node == null || node.getGrid() == null) {
+            return null;
+        }
+        for (IGridNode candidate : node.getGrid().getNodes()) {
+            if (candidate.getOwner() instanceof BlockEntity be && be.getLevel() != null && !be.isRemoved()) {
+                return GlobalPos.of(be.getLevel().dimension(), be.getBlockPos());
+            }
+        }
+        return null;
     }
 
     static @Nullable NetworkStorage find(ServerLevel level, BlockPos pos) {

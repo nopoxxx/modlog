@@ -1,0 +1,15 @@
+{
+  "required": false,
+  "minVersion": "0.8",
+  "package": "dev.nopox.modlog.mixin.compat",
+  "plugin": "dev.nopox.modlog.mixin.compat.CompatMixinPlugin",
+  "compatibilityLevel": "JAVA_21",
+  "mixins": [
+    "sophisticated.MagnetUpgradeWrapperMixin",
+    "sophisticated.PickupResponseUpgradeMixin",
+    "sophisticated.UpgradeWrapperBaseAccessor"
+  ],
+  "injectors": {
+    "defaultRequire": 0
+  }
+}

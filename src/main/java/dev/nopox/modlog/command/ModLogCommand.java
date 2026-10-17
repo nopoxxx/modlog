@@ -14,10 +14,14 @@ import dev.nopox.modlog.gui.LogBrowser;
 import dev.nopox.modlog.inspect.Inspector;
 import dev.nopox.modlog.lookup.LookupPresenter;
 import dev.nopox.modlog.rollback.RollbackManager;
+import dev.nopox.modlog.util.TimeFormat;
 import net.minecraft.ChatFormatting;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
+import net.minecraft.network.chat.ClickEvent;
 import net.minecraft.network.chat.Component;
+import net.minecraft.network.chat.Style;
+import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
 
 import static net.minecraft.commands.Commands.argument;
@@ -25,6 +29,8 @@ import static net.minecraft.commands.Commands.literal;
 
 /** {@code /ml} (alias {@code /modlog}). */
 public final class ModLogCommand {
+    private static final long MIN_PURGE_AGE_MS = 3_600_000L;
+
     private ModLogCommand() {
     }
 
@@ -55,6 +61,10 @@ public final class ModLogCommand {
                 .then(rollbackNode("rb", true))
                 .then(rollbackNode("restore", false))
                 .then(rollbackNode("rs", false))
+                .then(literal("purge")
+                        .requires(s -> s.hasPermission(Commands.LEVEL_OWNERS))
+                        .then(argument("params", StringArgumentType.greedyString())
+                                .executes(ctx -> purge(ctx, StringArgumentType.getString(ctx, "params")))))
                 .then(literal("undo")
                         .requires(s -> s.hasPermission(Commands.LEVEL_ADMINS))
                         .executes(ctx -> {
@@ -84,6 +94,7 @@ public final class ModLogCommand {
         s.sendSystemMessage(Component.literal("/ml page <n> - page of the last search"));
         s.sendSystemMessage(Component.literal("/ml rollback|restore <params> - undo/redo matching actions (t: required)"));
         s.sendSystemMessage(Component.literal("/ml undo - revert your last rollback/restore"));
+        s.sendSystemMessage(Component.literal("/ml purge t:<age> [vacuum] - delete actions older than <age>"));
         s.sendSystemMessage(Component.literal("/ml status - database status"));
         return 1;
     }
@@ -141,6 +152,73 @@ public final class ModLogCommand {
         }
         // Time, area and action type are picked with the GUI's own buttons
         LogBrowser.open(player, prefill.actors(), prefill.materials());
+        return 1;
+    }
+
+    /** {@code /ml purge t:30d [vacuum] [confirm]}: without confirm only says how much would be deleted. */
+    private static int purge(CommandContext<CommandSourceStack> ctx, String params) {
+        CommandSourceStack source = ctx.getSource();
+        Long age = null;
+        boolean confirm = false;
+        boolean vacuum = false;
+        for (String token : params.trim().toLowerCase(java.util.Locale.ROOT).split("\\s+")) {
+            try {
+                switch (token) {
+                    case "confirm" -> confirm = true;
+                    case "vacuum" -> vacuum = true;
+                    default -> {
+                        if (!token.startsWith("t:")) {
+                            throw new IllegalArgumentException("Unknown parameter '" + token + "'. Usage: /ml purge t:<age> [vacuum] [confirm]");
+                        }
+                        age = TimeFormat.parseDuration(token.substring(2));
+                    }
+                }
+            } catch (IllegalArgumentException e) {
+                source.sendFailure(Component.literal(e.getMessage()));
+                return 0;
+            }
+        }
+        if (age == null || age < MIN_PURGE_AGE_MS) {
+            source.sendFailure(Component.literal("Give an age of at least 1h, e.g. /ml purge t:30d"));
+            return 0;
+        }
+        Storage storage = ModLog.storage();
+        if (storage == null) {
+            source.sendFailure(Component.literal("Database is not available, see server log"));
+            return 0;
+        }
+        long cutoff = System.currentTimeMillis() - age;
+        String ageText = TimeFormat.duration(age);
+        MinecraftServer server = source.getServer();
+        if (!confirm) {
+            String command = "/ml purge t:%s%s confirm".formatted(ageText, vacuum ? " vacuum" : "");
+            storage.countOlderThan(cutoff).whenComplete((count, error) -> server.execute(() -> {
+                if (error != null) {
+                    source.sendFailure(Component.literal("Count failed: " + error.getMessage()));
+                } else if (count == 0) {
+                    source.sendSystemMessage(Component.literal("No actions older than " + ageText + "."));
+                } else {
+                    source.sendSystemMessage(Component.literal("%d actions older than %s would be deleted permanently. To do it, run "
+                            .formatted(count, ageText)).withStyle(ChatFormatting.GOLD)
+                            .append(Component.literal(command).withStyle(Style.EMPTY.withColor(ChatFormatting.RED)
+                                    .withClickEvent(new ClickEvent(ClickEvent.Action.SUGGEST_COMMAND, command)))));
+                }
+            }));
+            return 1;
+        }
+        source.sendSystemMessage(Component.literal("Purging actions older than " + ageText
+                + (vacuum ? " and compacting the database (writes pause meanwhile)..." : "...")).withStyle(ChatFormatting.DARK_AQUA));
+        long started = System.currentTimeMillis();
+        storage.purge(cutoff, vacuum).whenComplete((deleted, error) -> server.execute(() -> {
+            if (error != null) {
+                ModLog.LOGGER.error("Purge failed", error);
+                source.sendFailure(Component.literal("Purge failed: " + error.getMessage()));
+            } else {
+                source.sendSystemMessage(Component.literal("Purged %d actions in %.1fs.".formatted(deleted,
+                        (System.currentTimeMillis() - started) / 1000.0)).withStyle(ChatFormatting.DARK_AQUA));
+                ModLog.LOGGER.info("{} purged {} actions older than {}", source.getTextName(), deleted, ageText);
+            }
+        }));
         return 1;
     }
 

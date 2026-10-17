@@ -5,9 +5,11 @@ import dev.nopox.modlog.ModLogConfig;
 import dev.nopox.modlog.action.ActionType;
 import dev.nopox.modlog.action.Actor;
 import dev.nopox.modlog.action.LoggedAction;
+import dev.nopox.modlog.compat.ItemStorages;
 import dev.nopox.modlog.compat.NetworkStorages;
 import dev.nopox.modlog.util.NbtBytes;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.GlobalPos;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.PacketListener;
@@ -50,11 +52,14 @@ import java.util.function.Supplier;
  */
 public final class ContainerTracker {
     /**
-     * A GUI the player opened on a block.
+     * A GUI the player opened on a storage.
      *
-     * @param network the GUI is a storage network terminal (AE2, RS): items go to the network, not the block
+     * @param pos    where transactions are logged: the block, a block of the linked network (wireless terminals), or
+     *               the player's position (backpacks)
+     * @param marker {@code data} column value telling rollback where the items went: {@link NetworkStorages#DATA_MARKER}
+     *               for a storage network, an {@link ItemStorages} marker for an item storage, null for the block itself
      */
-    private record Session(AbstractContainerMenu menu, ServerLevel level, BlockPos pos, boolean network) {
+    private record Session(AbstractContainerMenu menu, ServerLevel level, BlockPos pos, @Nullable String marker) {
     }
 
     /** Snapshot taken before a packet is handled. */
@@ -62,16 +67,16 @@ public final class ContainerTracker {
         final ServerPlayer player;
         final ServerLevel level;
         final BlockPos pos;
-        final boolean network;
+        final @Nullable String marker;
         final Map<ItemKey, Integer> before;
         final Map<ItemKey, Integer> tossed = new HashMap<>();
 
-        Capture(ServerPlayer player, ServerLevel level, BlockPos pos, boolean network) {
+        Capture(ServerPlayer player, ServerLevel level, BlockPos pos, @Nullable String marker) {
             this.player = player;
             this.level = level;
             this.pos = pos;
-            this.network = network;
-            this.before = playerItems(player);
+            this.marker = marker;
+            this.before = playerItems(player, marker);
         }
     }
 
@@ -105,7 +110,7 @@ public final class ContainerTracker {
             if (session == null) {
                 task.run();
             } else {
-                capture(game.player, session.level, session.pos, session.network, () -> {
+                capture(game.player, session.level, session.pos, session.marker, () -> {
                     task.run();
                     return null;
                 });
@@ -116,7 +121,7 @@ public final class ContainerTracker {
     public static <T> Supplier<T> wrapPayload(ServerGamePacketListenerImpl game, Supplier<T> task) {
         return () -> {
             Session session = currentSession(game.player);
-            return session == null ? task.get() : capture(game.player, session.level, session.pos, session.network, task);
+            return session == null ? task.get() : capture(game.player, session.level, session.pos, session.marker, task);
         };
     }
 
@@ -125,7 +130,7 @@ public final class ContainerTracker {
     private static void handleVanilla(ServerPlayer player, Packet<?> packet, Runnable task) {
         ServerLevel level = player.serverLevel();
         @Nullable BlockPos target = null;
-        boolean network = false;
+        @Nullable String marker = null;
         @Nullable BlockPos usingOn = null;
 
         if (packet instanceof ServerboundContainerClickPacket
@@ -135,7 +140,7 @@ public final class ContainerTracker {
             if (session != null) {
                 level = session.level;
                 target = session.pos;
-                network = session.network;
+                marker = session.marker;
             }
         } else if (packet instanceof ServerboundUseItemOnPacket use) {
             usingOn = use.getHitResult().getBlockPos();
@@ -158,7 +163,7 @@ public final class ContainerTracker {
             if (target == null) {
                 task.run();
             } else {
-                capture(player, level, target, network, () -> {
+                capture(player, level, target, marker, () -> {
                     task.run();
                     return null;
                 });
@@ -170,11 +175,11 @@ public final class ContainerTracker {
         }
     }
 
-    private static <T> T capture(ServerPlayer player, ServerLevel level, BlockPos pos, boolean network, Supplier<T> task) {
+    private static <T> T capture(ServerPlayer player, ServerLevel level, BlockPos pos, @Nullable String marker, Supplier<T> task) {
         if (active != null || !ModLogConfig.LOG_CONTAINERS.get()) {
             return task.get();
         }
-        Capture capture = new Capture(player, level, pos.immutable(), network);
+        Capture capture = new Capture(player, level, pos.immutable(), marker);
         active = capture;
         try {
             return task.get();
@@ -185,7 +190,7 @@ public final class ContainerTracker {
     }
 
     private static void finish(Capture c) {
-        Map<ItemKey, Integer> after = playerItems(c.player);
+        Map<ItemKey, Integer> after = playerItems(c.player, c.marker);
         // container change = -(player change) - tossed
         Map<ItemKey, Integer> delta = new HashMap<>();
         c.before.forEach((k, n) -> delta.merge(k, n, Integer::sum));
@@ -203,16 +208,20 @@ public final class ContainerTracker {
             ModLog.log(new LoggedAction(now, actor, world, c.pos.getX(), c.pos.getY(), c.pos.getZ(),
                     n > 0 ? ActionType.CONTAINER_ADD : ActionType.CONTAINER_REMOVE,
                     BuiltInRegistries.ITEM.getKey(stack.getItem()).toString(),
-                    c.network ? NetworkStorages.DATA_MARKER : null, Math.abs(n),
+                    c.marker, Math.abs(n),
                     NbtBytes.compress((CompoundTag) stack.save(c.level.registryAccess())), null, 0));
         });
     }
 
-    private static Map<ItemKey, Integer> playerItems(ServerPlayer player) {
+    /** The player's items; the item holding an open item storage (a backpack) is left out, its data may change. */
+    private static Map<ItemKey, Integer> playerItems(ServerPlayer player, @Nullable String marker) {
         Map<ItemKey, Integer> items = new HashMap<>();
         Inventory inventory = player.getInventory();
         for (int i = 0; i < inventory.getContainerSize(); i++) {
-            add(items, inventory.getItem(i));
+            ItemStack stack = inventory.getItem(i);
+            if (!ItemStorages.isHolder(stack, marker)) {
+                add(items, stack);
+            }
         }
         add(items, player.containerMenu.getCarried());
         return items;
@@ -245,12 +254,28 @@ public final class ContainerTracker {
         if (pos == null || level.getBlockEntity(pos) == null) {
             pos = blockEntityBehind(menu);
         }
-        // Menus not backed by a block (crafting table, backpacks, wireless terminals) aren't tracked
-        if (pos == null || level.getBlockEntity(pos) == null) {
-            SESSIONS.remove(player.getUUID());
+        if (pos != null && level.getBlockEntity(pos) != null) {
+            String marker = NetworkStorages.isTerminal(menu) ? NetworkStorages.DATA_MARKER : null;
+            SESSIONS.put(player.getUUID(), new Session(menu, level, pos.immutable(), marker));
             return;
         }
-        SESSIONS.put(player.getUUID(), new Session(menu, level, pos.immutable(), NetworkStorages.isTerminal(menu)));
+
+        // Not opened on a block: an item storage (backpack) or a wireless terminal
+        String itemMarker = ItemStorages.identify(menu);
+        if (itemMarker != null) {
+            SESSIONS.put(player.getUUID(), new Session(menu, level, player.blockPosition(), itemMarker));
+            return;
+        }
+        if (NetworkStorages.isTerminal(menu)) {
+            GlobalPos networkPos = NetworkStorages.locate(menu);
+            ServerLevel networkLevel = networkPos == null ? null : player.server.getLevel(networkPos.dimension());
+            if (networkLevel != null) {
+                SESSIONS.put(player.getUUID(), new Session(menu, networkLevel, networkPos.pos(), NetworkStorages.DATA_MARKER));
+                return;
+            }
+        }
+        // Crafting table, portable cells, unlinked wireless terminals, ...: not tracked
+        SESSIONS.remove(player.getUUID());
     }
 
     /** Fallback for menus opened without a click: a slot whose container is a block entity (vanilla-style blocks). */

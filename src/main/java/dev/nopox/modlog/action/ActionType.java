@@ -10,7 +10,9 @@ public enum ActionType {
     BLOCK_BREAK(0, "broke"),
     BLOCK_PLACE(1, "placed"),
     CONTAINER_REMOVE(2, "removed"),
-    CONTAINER_ADD(3, "added");
+    CONTAINER_ADD(3, "added"),
+    /** Picked up from the ground straight into a storage (backpack magnet/pickup upgrades). Undone like an add. */
+    ITEM_PICKUP(4, "picked up");
 
     private static final Map<Integer, ActionType> BY_ID = new HashMap<>();
 

@@ -14,6 +14,8 @@ import java.util.concurrent.TimeUnit;
 
 /** Owns the database, the writer thread and the lookup thread for one server run. */
 public final class Storage {
+    private static final int PURGE_BATCH = 20_000;
+
     private final Database database;
     private final ActionWriter writer;
     private final ExecutorService lookups = Executors.newSingleThreadExecutor(r -> {
@@ -65,6 +67,36 @@ public final class Storage {
         return CompletableFuture.runAsync(() -> {
             try {
                 database.markRolledBack(ids, rolledBack);
+            } catch (SQLException e) {
+                throw new CompletionException(e);
+            }
+        }, lookups);
+    }
+
+    public CompletableFuture<Integer> countOlderThan(long cutoff) {
+        return CompletableFuture.supplyAsync(() -> {
+            try {
+                return database.countOlderThan(cutoff);
+            } catch (SQLException e) {
+                throw new CompletionException(e);
+            }
+        }, lookups);
+    }
+
+    /** Deletes all actions older than {@code cutoff}, in batches. @return rows deleted */
+    public CompletableFuture<Integer> purge(long cutoff, boolean vacuum) {
+        return CompletableFuture.supplyAsync(() -> {
+            try {
+                int total = 0;
+                int deleted;
+                do {
+                    deleted = database.deleteOlderThan(cutoff, PURGE_BATCH);
+                    total += deleted;
+                } while (deleted == PURGE_BATCH);
+                if (vacuum) {
+                    database.vacuum();
+                }
+                return total;
             } catch (SQLException e) {
                 throw new CompletionException(e);
             }

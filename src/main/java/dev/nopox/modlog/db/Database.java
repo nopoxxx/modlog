@@ -206,7 +206,39 @@ public final class Database implements AutoCloseable {
         }
     }
 
+    /**
+     * Deletes up to {@code limit} actions older than {@code cutoff}. Called from the lookup thread; small batches keep
+     * the writer from waiting long on the shared write connection.
+     *
+     * @return rows deleted
+     */
+    synchronized int deleteOlderThan(long cutoff, int limit) throws SQLException {
+        try (PreparedStatement ps = writeConnection.prepareStatement(
+                "DELETE FROM actions WHERE id IN (SELECT id FROM actions WHERE time < ? LIMIT ?)")) {
+            ps.setLong(1, cutoff);
+            ps.setInt(2, limit);
+            return ps.executeUpdate();
+        }
+    }
+
+    /** Rebuilds the database file so space freed by a purge is returned to the disk. Blocks writes while it runs. */
+    synchronized void vacuum() throws SQLException {
+        try (Statement st = writeConnection.createStatement()) {
+            st.execute("VACUUM");
+        }
+    }
+
     // ---- Reader side ----
+
+    int countOlderThan(long cutoff) throws SQLException {
+        try (PreparedStatement ps = readConnection.prepareStatement("SELECT COUNT(*) FROM actions WHERE time < ?")) {
+            ps.setLong(1, cutoff);
+            try (ResultSet rs = ps.executeQuery()) {
+                rs.next();
+                return rs.getInt(1);
+            }
+        }
+    }
 
     /**
      * Actions to roll back ({@code rolledBack == false}, newest first) or to restore ({@code rolledBack == true},
