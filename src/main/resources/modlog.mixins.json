@@ -1,0 +1,13 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "dev.nopox.modlog.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "mixins": [
+    "PacketUtilsMixin",
+    "ServerPayloadContextMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}
