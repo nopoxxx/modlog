@@ -1,6 +1,7 @@
 package dev.nopox.modlog.gui;
 
 import dev.nopox.modlog.ModLog;
+import dev.nopox.modlog.Permissions;
 import dev.nopox.modlog.action.ActionType;
 import dev.nopox.modlog.compat.ItemStorages;
 import dev.nopox.modlog.compat.NetworkStorages;
@@ -11,7 +12,6 @@ import dev.nopox.modlog.rollback.RollbackManager;
 import dev.nopox.modlog.util.Ids;
 import dev.nopox.modlog.util.TimeFormat;
 import net.minecraft.ChatFormatting;
-import net.minecraft.commands.Commands;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.core.registries.BuiltInRegistries;
@@ -391,10 +391,11 @@ public final class LogBrowser {
     }
 
     private boolean requireAdmin() {
-        if (player.hasPermissions(Commands.LEVEL_ADMINS)) {
+        if (Permissions.check(player, Permissions.ROLLBACK)) {
             return true;
         }
-        player.sendSystemMessage(Component.literal("You need permission level 3 to roll back").withStyle(ChatFormatting.RED));
+        player.sendSystemMessage(Component.literal("You don't have permission to roll back (modlog.rollback)")
+                .withStyle(ChatFormatting.RED));
         return false;
     }
 

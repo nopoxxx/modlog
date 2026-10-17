@@ -57,16 +57,20 @@ Create 6.0.6, Sophisticated Backpacks 3.25.77 / Core 1.4.86.
 
 `/ml` (alias `/modlog`).
 
-| Command | Permission level | Description |
+| Command | Permission | Description |
 |---|---|---|
-| `/ml i` | 2 | Toggle the inspector |
-| `/ml l <params>` | 2 | Search; `/ml page <n>` for more pages |
-| `/ml gui [u:<players>] [b:<blocks>]` | 2 | In-game log browser |
-| `/ml status` | 2 | Database status |
-| `/ml rollback <params>` (`rb`) | 3 | Undo matching actions; needs `t:` and `u:` or `r:` |
-| `/ml restore <params>` (`rs`) | 3 | Redo rolled-back actions |
-| `/ml undo` | 3 | Revert your last rollback/restore |
-| `/ml purge t:<age> [vacuum] [confirm]` | 4 | Delete actions older than `<age>`; without `confirm` it only counts them |
+| `/ml i` | `modlog.lookup` | Toggle the inspector |
+| `/ml l <params>` | `modlog.lookup` | Search; `/ml page <n>` for more pages |
+| `/ml gui [u:<players>] [b:<blocks>]` | `modlog.lookup` | In-game log browser |
+| `/ml status` | `modlog.lookup` | Database status |
+| `/ml rollback <params>` (`rb`) | `modlog.rollback` | Undo matching actions; needs `t:` and `u:` or `r:` |
+| `/ml restore <params>` (`rs`) | `modlog.rollback` | Redo rolled-back actions |
+| `/ml undo` | `modlog.rollback` | Revert your last rollback/restore |
+| `/ml purge t:<age> [vacuum] [confirm]` | `modlog.purge` | Delete actions older than `<age>`; without `confirm` it only counts them |
+
+Permissions go through NeoForge's permission API, so LuckPerms for NeoForge works out of the box. On Arclight, a
+node set explicitly through Bukkit (LuckPerms for Bukkit) takes precedence. Without a permissions plugin the defaults
+are operator levels: `lookup` 2, `rollback` 3, `purge` 4. The console always has full access.
 
 Parameters:
 

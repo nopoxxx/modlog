@@ -36,6 +36,7 @@ public final class ModLog {
 
     public ModLog(IEventBus modEventBus, ModContainer modContainer) {
         modContainer.registerConfig(ModConfig.Type.COMMON, ModLogConfig.SPEC);
+        Permissions.register(NeoForge.EVENT_BUS);
 
         NeoForge.EVENT_BUS.addListener(ModLog::onServerStarting);
         NeoForge.EVENT_BUS.addListener(ModLog::onServerStopped);

@@ -8,6 +8,7 @@ import com.mojang.brigadier.context.CommandContext;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
 import com.mojang.brigadier.tree.LiteralCommandNode;
 import dev.nopox.modlog.ModLog;
+import dev.nopox.modlog.Permissions;
 import dev.nopox.modlog.db.LookupQuery;
 import dev.nopox.modlog.db.Storage;
 import dev.nopox.modlog.gui.LogBrowser;
@@ -36,53 +37,63 @@ public final class ModLogCommand {
 
     public static void register(CommandDispatcher<CommandSourceStack> dispatcher) {
         LiteralCommandNode<CommandSourceStack> root = dispatcher.register(literal("ml")
-                .requires(s -> s.hasPermission(Commands.LEVEL_GAMEMASTERS))
+                .requires(ModLogCommand::canUseAny)
                 .executes(ModLogCommand::help)
                 .then(literal("help").executes(ModLogCommand::help))
-                .then(literal("inspect").executes(ModLogCommand::inspect))
-                .then(literal("i").executes(ModLogCommand::inspect))
+                .then(literal("inspect").requires(s -> Permissions.check(s, Permissions.LOOKUP)).executes(ModLogCommand::inspect))
+                .then(literal("i").requires(s -> Permissions.check(s, Permissions.LOOKUP)).executes(ModLogCommand::inspect))
                 .then(literal("lookup")
+                        .requires(s -> Permissions.check(s, Permissions.LOOKUP))
                         .executes(ctx -> lookup(ctx, ""))
                         .then(argument("params", StringArgumentType.greedyString())
                                 .executes(ctx -> lookup(ctx, StringArgumentType.getString(ctx, "params")))))
                 .then(literal("l")
+                        .requires(s -> Permissions.check(s, Permissions.LOOKUP))
                         .executes(ctx -> lookup(ctx, ""))
                         .then(argument("params", StringArgumentType.greedyString())
                                 .executes(ctx -> lookup(ctx, StringArgumentType.getString(ctx, "params")))))
                 .then(literal("gui")
+                        .requires(s -> Permissions.check(s, Permissions.LOOKUP))
                         .executes(ctx -> gui(ctx, ""))
                         .then(argument("params", StringArgumentType.greedyString())
                                 .executes(ctx -> gui(ctx, StringArgumentType.getString(ctx, "params")))))
                 .then(literal("page")
+                        .requires(s -> Permissions.check(s, Permissions.LOOKUP))
                         .then(argument("page", IntegerArgumentType.integer(1))
                                 .executes(ModLogCommand::page)))
-                .then(literal("status").executes(ModLogCommand::status))
+                .then(literal("status").requires(s -> Permissions.check(s, Permissions.LOOKUP)).executes(ModLogCommand::status))
                 .then(rollbackNode("rollback", true))
                 .then(rollbackNode("rb", true))
                 .then(rollbackNode("restore", false))
                 .then(rollbackNode("rs", false))
                 .then(literal("purge")
-                        .requires(s -> s.hasPermission(Commands.LEVEL_OWNERS))
+                        .requires(s -> Permissions.check(s, Permissions.PURGE))
                         .then(argument("params", StringArgumentType.greedyString())
                                 .executes(ctx -> purge(ctx, StringArgumentType.getString(ctx, "params")))))
                 .then(literal("undo")
-                        .requires(s -> s.hasPermission(Commands.LEVEL_ADMINS))
+                        .requires(s -> Permissions.check(s, Permissions.ROLLBACK))
                         .executes(ctx -> {
                             RollbackManager.undo(ctx.getSource());
                             return 1;
                         })));
 
         dispatcher.register(literal("modlog")
-                .requires(s -> s.hasPermission(Commands.LEVEL_GAMEMASTERS))
+                .requires(ModLogCommand::canUseAny)
                 .executes(ModLogCommand::help)
                 .redirect(root));
     }
 
     private static LiteralArgumentBuilder<CommandSourceStack> rollbackNode(String name, boolean rollback) {
         return literal(name)
-                .requires(s -> s.hasPermission(Commands.LEVEL_ADMINS))
+                .requires(s -> Permissions.check(s, Permissions.ROLLBACK))
                 .then(argument("params", StringArgumentType.greedyString())
                         .executes(ctx -> rollback(ctx, StringArgumentType.getString(ctx, "params"), rollback)));
+    }
+
+    /** {@code /ml} itself is available to anyone with at least one ModLog permission. */
+    private static boolean canUseAny(CommandSourceStack s) {
+        return Permissions.check(s, Permissions.LOOKUP) || Permissions.check(s, Permissions.ROLLBACK)
+                || Permissions.check(s, Permissions.PURGE);
     }
 
     private static int help(CommandContext<CommandSourceStack> ctx) {
